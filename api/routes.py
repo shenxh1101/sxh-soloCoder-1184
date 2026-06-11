@@ -1,7 +1,8 @@
 import datetime
-from flask import Blueprint, request, jsonify
+import io
+from flask import Blueprint, request, jsonify, send_file
 from models import db, Task, Execution, EnvVar
-from scheduler_manager import scheduler_manager
+from scheduler_manager import scheduler_manager, validate_trigger, preview_trigger_times
 from services.backup import export_tasks_to_dict, backup_to_file, restore_from_dict, restore_from_file, get_backup_files
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
@@ -25,11 +26,24 @@ def create_task():
     if Task.query.filter_by(name=name).first():
         return jsonify({'error': f'Task "{name}" already exists'}), 409
 
+    trigger_type = data.get('trigger_type', 'cron')
+    trigger_value = data.get('trigger_value', '')
+    try:
+        validate_trigger(trigger_type, trigger_value)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    depends_on = data.get('depends_on')
+    if depends_on:
+        temp_task = Task()
+        if temp_task.check_circular_dependency(int(depends_on)):
+            return jsonify({'error': '不能选择自身或形成循环依赖'}), 400
+
     task = Task(
         name=name,
         description=data.get('description', ''),
-        trigger_type=data.get('trigger_type', 'cron'),
-        trigger_value=data.get('trigger_value', ''),
+        trigger_type=trigger_type,
+        trigger_value=trigger_value,
         execute_type=data.get('execute_type', 'python'),
         execute_content=data.get('execute_content', ''),
         enabled=data.get('enabled', True),
@@ -39,7 +53,7 @@ def create_task():
         notify_email=data.get('notify_email', ''),
         notify_on_success=data.get('notify_on_success', False),
         notify_on_failure=data.get('notify_on_failure', True),
-        depends_on=data.get('depends_on'),
+        depends_on=depends_on,
     )
     task.set_env_vars(data.get('env_vars', {}))
     db.session.add(task)
@@ -59,7 +73,10 @@ def get_task(task_id):
     task = db.session.get(Task, task_id)
     if not task:
         return jsonify({'error': 'Task not found'}), 404
-    return jsonify(task.to_dict())
+    result = task.to_dict()
+    result['dependency_chain'] = task.get_dependency_chain()
+    result['dependents'] = [{'id': d.id, 'name': d.name} for d in task.get_dependents()]
+    return jsonify(result)
 
 
 @api_bp.route('/tasks/<int:task_id>', methods=['PUT'])
@@ -76,6 +93,20 @@ def update_task(task_id):
         if Task.query.filter_by(name=data['name']).first():
             return jsonify({'error': f'Task name "{data["name"]}" already exists'}), 409
         task.name = data['name']
+
+    if 'trigger_type' in data or 'trigger_value' in data:
+        tt = data.get('trigger_type', task.trigger_type)
+        tv = data.get('trigger_value', task.trigger_value)
+        try:
+            validate_trigger(tt, tv)
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+
+    if 'depends_on' in data:
+        new_dep = data['depends_on']
+        if new_dep:
+            if task.check_circular_dependency(int(new_dep)):
+                return jsonify({'error': '不能选择自身或形成循环依赖'}), 400
 
     scheduler_manager.remove_job(task_id, task.name)
 
@@ -108,6 +139,25 @@ def delete_task(task_id):
     db.session.delete(task)
     db.session.commit()
     return jsonify({'message': 'Task deleted'})
+
+
+@api_bp.route('/tasks/preview-trigger', methods=['GET'])
+def preview_trigger():
+    trigger_type = request.args.get('type', 'cron')
+    trigger_value = request.args.get('value', '').strip()
+    count = request.args.get('count', 5, type=int)
+
+    if not trigger_value:
+        return jsonify({'error': 'trigger_value is required'}), 400
+    if count > 20:
+        count = 20
+
+    try:
+        validate_trigger(trigger_type, trigger_value)
+        times = preview_trigger_times(trigger_type, trigger_value, count)
+        return jsonify({'valid': True, 'times': times})
+    except ValueError as e:
+        return jsonify({'valid': False, 'error': str(e), 'times': []})
 
 
 @api_bp.route('/tasks/<int:task_id>/execute', methods=['POST'])
@@ -147,12 +197,38 @@ def resume_task(task_id):
 @api_bp.route('/executions', methods=['GET'])
 def list_executions():
     task_id = request.args.get('task_id', type=int)
+    status = request.args.get('status', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
     limit = request.args.get('limit', 50, type=int)
+    offset = request.args.get('offset', 0, type=int)
+
     query = Execution.query.order_by(Execution.start_time.desc())
     if task_id:
         query = query.filter_by(task_id=task_id)
-    executions = query.limit(limit).all()
-    return jsonify([e.to_dict() for e in executions])
+    if status:
+        query = query.filter_by(status=status)
+    if date_from:
+        try:
+            dt_from = datetime.datetime.fromisoformat(date_from)
+            query = query.filter(Execution.start_time >= dt_from)
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            dt_to = datetime.datetime.fromisoformat(date_to)
+            query = query.filter(Execution.start_time <= dt_to)
+        except ValueError:
+            pass
+
+    total = query.count()
+    executions = query.offset(offset).limit(limit).all()
+    return jsonify({
+        'total': total,
+        'limit': limit,
+        'offset': offset,
+        'data': [e.to_dict() for e in executions],
+    })
 
 
 @api_bp.route('/executions/<int:execution_id>', methods=['GET'])
@@ -160,7 +236,31 @@ def get_execution(execution_id):
     execution = db.session.get(Execution, execution_id)
     if not execution:
         return jsonify({'error': 'Execution not found'}), 404
-    return jsonify(execution.to_dict())
+    result = execution.to_dict()
+    if execution.trigger_source_execution_id:
+        source_exec = db.session.get(Execution, execution.trigger_source_execution_id)
+        if source_exec:
+            result['trigger_source'] = {
+                'execution_id': source_exec.id,
+                'task_name': source_exec.task.name if source_exec.task else '',
+            }
+    return jsonify(result)
+
+
+@api_bp.route('/executions/<int:execution_id>/download', methods=['GET'])
+def download_execution_log(execution_id):
+    execution = db.session.get(Execution, execution_id)
+    if not execution:
+        return jsonify({'error': 'Execution not found'}), 404
+    log_content = execution.output_log or '(empty)'
+    task_name = execution.task.name if execution.task else 'unknown'
+    filename = f'{task_name}_execution_{execution_id}.log'
+    return send_file(
+        io.BytesIO(log_content.encode('utf-8')),
+        mimetype='text/plain',
+        as_attachment=True,
+        download_name=filename,
+    )
 
 
 @api_bp.route('/env-vars', methods=['GET'])
@@ -238,6 +338,55 @@ def create_backup():
 def list_backup_files():
     files = get_backup_files()
     return jsonify(files)
+
+
+@api_bp.route('/backup/preview', methods=['POST'])
+def preview_backup():
+    data = request.get_json()
+    if not data or 'data' not in data:
+        filename = (data or {}).get('filename') or request.args.get('filename')
+        if filename:
+            import os
+            from config import Config
+            filepath = os.path.join(Config.BACKUP_DIR, filename)
+            if not os.path.exists(filepath):
+                return jsonify({'error': 'Backup file not found'}), 404
+            import json
+            with open(filepath, 'r', encoding='utf-8') as f:
+                backup_data = json.load(f)
+        else:
+            return jsonify({'error': 'No backup data or filename provided'}), 400
+    else:
+        backup_data = data['data']
+
+    tasks_preview = []
+    existing_names = {t.name for t in Task.query.all()}
+    for t in backup_data.get('tasks', []):
+        tasks_preview.append({
+            'name': t['name'],
+            'trigger_type': t.get('trigger_type', 'cron'),
+            'trigger_value': t.get('trigger_value', ''),
+            'action': 'update' if t['name'] in existing_names else 'create',
+        })
+
+    env_keys = {ev.key for ev in EnvVar.query.all()}
+    env_preview = []
+    for ev in backup_data.get('env_vars', []):
+        env_preview.append({
+            'key': ev['key'],
+            'action': 'update' if ev['key'] in env_keys else 'create',
+        })
+
+    return jsonify({
+        'tasks': tasks_preview,
+        'env_vars': env_preview,
+        'summary': {
+            'tasks_create': sum(1 for t in tasks_preview if t['action'] == 'create'),
+            'tasks_update': sum(1 for t in tasks_preview if t['action'] == 'update'),
+            'env_vars_create': sum(1 for e in env_preview if e['action'] == 'create'),
+            'env_vars_update': sum(1 for e in env_preview if e['action'] == 'update'),
+        }
+    })
 
 
 @api_bp.route('/backup/restore', methods=['POST'])

@@ -1,0 +1,41 @@
+{
+  "version": "1.0",
+  "exported_at": "2026-06-11T14:20:01.046404+00:00",
+  "tasks": [
+    {
+      "name": "task_a",
+      "description": "",
+      "trigger_type": "interval",
+      "trigger_value": "60",
+      "execute_type": "python",
+      "execute_content": "print(\"A\")",
+      "enabled": true,
+      "paused": false,
+      "retry_count": 0,
+      "retry_delay_seconds": 60,
+      "notify_email": "",
+      "notify_on_success": false,
+      "notify_on_failure": true,
+      "depends_on_name": null,
+      "env_vars": {}
+    },
+    {
+      "name": "task_b",
+      "description": "",
+      "trigger_type": "interval",
+      "trigger_value": "120",
+      "execute_type": "python",
+      "execute_content": "print(\"B\")",
+      "enabled": true,
+      "paused": false,
+      "retry_count": 0,
+      "retry_delay_seconds": 60,
+      "notify_email": "",
+      "notify_on_success": false,
+      "notify_on_failure": true,
+      "depends_on_name": "task_a",
+      "env_vars": {}
+    }
+  ],
+  "env_vars": []
+}

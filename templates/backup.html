@@ -11,15 +11,23 @@
         <button class="btn" onclick="window.open('/api/backup/export', '_blank')">在线预览导出</button>
     </div>
     <div class="column">
-        <h2>导入恢复</h2>
-        <p>从 JSON 数据或备份文件恢复任务配置。</p>
-        <form onsubmit="restoreFromData(event)" style="margin-bottom:12px;">
-            <div class="form-group">
-                <label for="restore_data">粘贴 JSON 数据</label>
-                <textarea id="restore_data" rows="4" placeholder='{"version":"1.0","tasks":[...],"env_vars":[...]}'></textarea>
-            </div>
-            <button type="submit" class="btn btn-primary">从数据恢复</button>
-        </form>
+        <h2>从数据恢复</h2>
+        <p>从 JSON 数据恢复任务配置。先预览变更再确认执行。</p>
+        <div class="form-group">
+            <label for="restore_data">粘贴 JSON 数据</label>
+            <textarea id="restore_data" rows="4" placeholder='{"version":"1.0","tasks":[...],"env_vars":[...]}'></textarea>
+        </div>
+        <button class="btn" onclick="previewRestoreFromData()">预览变更</button>
+        <button class="btn btn-primary" id="btn-restore-data" style="display:none;" onclick="executeRestoreFromData()">确认恢复</button>
+    </div>
+</div>
+
+<div id="preview-panel" class="preview-panel" style="display:none;">
+    <h2>恢复预览</h2>
+    <div id="preview-content"></div>
+    <div class="form-actions">
+        <button class="btn btn-primary" onclick="confirmRestore()">确认执行恢复</button>
+        <button class="btn" onclick="cancelPreview()">取消</button>
     </div>
 </div>
 
@@ -40,8 +48,9 @@
             <td>{{ bf.filename }}</td>
             <td>{{ (bf.size / 1024) | round(1) }} KB</td>
             <td>{{ bf.modified }}</td>
-            <td>
-                <button class="btn btn-sm btn-primary" onclick="restoreFromFile('{{ bf.filename }}')">恢复</button>
+            <td class="action-cell">
+                <button class="btn btn-sm" onclick="previewRestoreFromFile('{{ bf.filename }}')">预览恢复</button>
+                <button class="btn btn-sm btn-primary" onclick="restoreFromFile('{{ bf.filename }}')">直接恢复</button>
             </td>
         </tr>
         {% endfor %}
@@ -50,16 +59,19 @@
 {% else %}
 <p class="empty-hint">暂无备份文件</p>
 {% endif %}
+{% endblock %}
 
+{% block scripts %}
 <script>
+var pendingRestoreData = null;
+
 async function createBackup() {
     var resp = await apiCall('/api/backup', { method: 'POST' });
     alert('备份成功: ' + resp.filepath);
     location.reload();
 }
 
-async function restoreFromData(e) {
-    e.preventDefault();
+async function previewRestoreFromData() {
     var raw = document.getElementById('restore_data').value.trim();
     if (!raw) { alert('请粘贴 JSON 数据'); return; }
     try {
@@ -68,19 +80,74 @@ async function restoreFromData(e) {
         alert('JSON 格式无效: ' + err.message);
         return;
     }
-    if (!confirm('确定要从数据恢复吗？这会覆盖已存在的同名任务。')) return;
+    await showPreview({ data: data });
+}
+
+async function previewRestoreFromFile(filename) {
+    await showPreview({ filename: filename });
+}
+
+async function showPreview(payload) {
+    var resp = await apiCall('/api/backup/preview', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+    pendingRestoreData = payload;
+
+    var html = '<div class="preview-summary">';
+    html += '将<strong>新增</strong> ' + resp.summary.tasks_create + ' 个任务，';
+    html += '<strong>更新</strong> ' + resp.summary.tasks_update + ' 个任务；';
+    html += '新增 ' + resp.summary.env_vars_create + ' 个环境变量，';
+    html += '更新 ' + resp.summary.env_vars_update + ' 个环境变量。';
+    html += '</div>';
+
+    if (resp.tasks.length > 0) {
+        html += '<h3>任务变更</h3><table><thead><tr><th>任务名</th><th>触发器</th><th>操作</th></tr></thead><tbody>';
+        resp.tasks.forEach(function(t) {
+            var label = t.action === 'create' ? '<span class="status-badge status-success">新增</span>' : '<span class="status-badge status-running">覆盖</span>';
+            html += '<tr><td>' + t.name + '</td><td>' + t.trigger_type + ':' + t.trigger_value + '</td><td>' + label + '</td></tr>';
+        });
+        html += '</tbody></table>';
+    }
+    if (resp.env_vars.length > 0) {
+        html += '<h3>环境变量变更</h3><table><thead><tr><th>变量名</th><th>操作</th></tr></thead><tbody>';
+        resp.env_vars.forEach(function(e) {
+            var label = e.action === 'create' ? '<span class="status-badge status-success">新增</span>' : '<span class="status-badge status-running">覆盖</span>';
+            html += '<tr><td>' + e.key + '</td><td>' + label + '</td></tr>';
+        });
+        html += '</tbody></table>';
+    }
+
+    document.getElementById('preview-content').innerHTML = html;
+    document.getElementById('preview-panel').style.display = 'block';
+}
+
+async function executeRestoreFromData() {
+    if (!confirm('确定要执行恢复操作吗？这可能会覆盖现有的任务配置。')) return;
     var resp = await apiCall('/api/backup/restore', {
         method: 'POST',
-        body: JSON.stringify({ data: data }),
+        body: JSON.stringify(pendingRestoreData),
     });
-    alert('恢复成功: 创建 ' + resp.results.tasks_created + ' 个任务, 更新 ' + resp.results.tasks_updated + ' 个任务');
+    alert('恢复成功: 创建 ' + resp.results.tasks_created + ' 个任务, 更新 ' + resp.results.tasks_updated + ' 个任务\n调度器已同步更新。');
+    pendingRestoreData = null;
+    cancelPreview();
     location.reload();
 }
 
+function confirmRestore() {
+    executeRestoreFromData();
+}
+
+function cancelPreview() {
+    document.getElementById('preview-panel').style.display = 'none';
+    document.getElementById('btn-restore-data').style.display = 'none';
+    pendingRestoreData = null;
+}
+
 async function restoreFromFile(filename) {
-    if (!confirm('确定要从文件 "' + filename + '" 恢复吗？这会覆盖已存在的同名任务。')) return;
+    if (!confirm('确定要从文件 "' + filename + '" 恢复吗？')) return;
     var resp = await apiCall('/api/backup/restore?filename=' + encodeURIComponent(filename), { method: 'POST' });
-    alert('恢复成功: 创建 ' + resp.results.tasks_created + ' 个任务, 更新 ' + resp.results.tasks_updated + ' 个任务');
+    alert('恢复成功: 创建 ' + resp.results.tasks_created + ' 个任务, 更新 ' + resp.results.tasks_updated + ' 个任务\n调度器已同步更新。');
     location.reload();
 }
 </script>

@@ -2,14 +2,15 @@
 {% block title %}环境变量 - 任务调度看板{% endblock %}
 {% block content %}
 <h1>环境变量管理</h1>
-<p class="hint">全局环境变量会被注入到所有命令行任务的执行环境中。</p>
+<p class="hint">全局环境变量会被注入到所有命令行任务的执行环境中。添加、编辑、删除后立即生效。</p>
 
 <div class="toolbar">
     <button class="btn btn-primary" onclick="showCreateForm()">+ 添加环境变量</button>
 </div>
 
 <div id="create-form" class="env-form" style="display:none;">
-    <h3>添加环境变量</h3>
+    <h3 id="env-form-title">添加环境变量</h3>
+    <input type="hidden" id="ev_edit_id">
     <div class="form-group">
         <label for="ev_key">变量名</label>
         <input type="text" id="ev_key" placeholder="MY_VAR">
@@ -22,7 +23,7 @@
         <label for="ev_desc">描述</label>
         <input type="text" id="ev_desc" placeholder="可选描述">
     </div>
-    <button class="btn btn-primary" onclick="createEnvVar()">保存</button>
+    <button class="btn btn-primary" onclick="saveEnvVar()">保存</button>
     <button class="btn" onclick="hideCreateForm()">取消</button>
 </div>
 
@@ -34,7 +35,7 @@
             <th>变量名</th>
             <th>变量值</th>
             <th>描述</th>
-            <th>创建时间</th>
+            <th>更新时间</th>
             <th>操作</th>
         </tr>
     </thead>
@@ -45,8 +46,9 @@
             <td><code>{{ ev.key }}</code></td>
             <td><code>{{ ev.value[:50] }}{% if ev.value|length > 50 %}...{% endif %}</code></td>
             <td>{{ ev.description[:50] if ev.description else '-' }}</td>
-            <td>{{ ev.created_at.strftime('%Y-%m-%d %H:%M') if ev.created_at else '-' }}</td>
-            <td>
+            <td>{{ ev.updated_at.strftime('%Y-%m-%d %H:%M') if ev.updated_at else '-' }}</td>
+            <td class="action-cell">
+                <button class="btn btn-sm" onclick="editEnvVar({{ ev.id }}, '{{ ev.key | e }}', '{{ ev.value | e }}', '{{ ev.description | e }}')">编辑</button>
                 <button class="btn btn-sm btn-danger" onclick="deleteEnvVar({{ ev.id }})">删除</button>
             </td>
         </tr>
@@ -58,27 +60,59 @@
 {% endif %}
 {% endblock %}
 
+{% block scripts %}
 <script>
 function showCreateForm() {
+    document.getElementById('ev_edit_id').value = '';
+    document.getElementById('ev_key').value = '';
+    document.getElementById('ev_value').value = '';
+    document.getElementById('ev_desc').value = '';
+    document.getElementById('ev_key').disabled = false;
+    document.getElementById('env-form-title').textContent = '添加环境变量';
     document.getElementById('create-form').style.display = 'block';
 }
+
 function hideCreateForm() {
     document.getElementById('create-form').style.display = 'none';
 }
-async function createEnvVar() {
+
+function editEnvVar(id, key, value, desc) {
+    document.getElementById('ev_edit_id').value = id;
+    document.getElementById('ev_key').value = key;
+    document.getElementById('ev_value').value = value;
+    document.getElementById('ev_desc').value = desc;
+    document.getElementById('ev_key').disabled = true;
+    document.getElementById('env-form-title').textContent = '编辑环境变量';
+    document.getElementById('create-form').style.display = 'block';
+}
+
+async function saveEnvVar() {
+    var id = document.getElementById('ev_edit_id').value;
     var key = document.getElementById('ev_key').value.trim();
     var value = document.getElementById('ev_value').value;
     var desc = document.getElementById('ev_desc').value;
     if (!key) { alert('变量名不能为空'); return; }
-    await apiCall('/api/env-vars', {
-        method: 'POST',
-        body: JSON.stringify({ key: key, value: value, description: desc }),
-    });
+
+    var method, url;
+    if (id) {
+        method = 'PUT';
+        url = '/api/env-vars/' + id;
+    } else {
+        method = 'POST';
+        url = '/api/env-vars';
+    }
+
+    var body = { value: value, description: desc };
+    if (!id) { body.key = key; }
+
+    await apiCall(url, { method: method, body: JSON.stringify(body) });
     location.reload();
 }
+
 async function deleteEnvVar(id) {
     if (!confirmDelete('确定要删除这个环境变量吗？')) return;
     await apiCall('/api/env-vars/' + id, { method: 'DELETE' });
     location.reload();
 }
 </script>
+{% endblock %}

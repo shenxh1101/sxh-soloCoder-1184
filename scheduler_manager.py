@@ -14,8 +14,60 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
+from croniter import croniter
 
 from config import Config
+
+
+def validate_trigger(trigger_type, trigger_value, timezone=None):
+    if trigger_type == 'cron':
+        parts = trigger_value.strip().split()
+        if len(parts) != 5:
+            raise ValueError(f'Cron 表达式必须是 5 个字段 (分 时 日 月 周)，当前是 {len(parts)} 个字段')
+        try:
+            croniter(trigger_value)
+        except (ValueError, KeyError) as e:
+            raise ValueError(f'Cron 表达式不合法: {e}')
+        return True
+    elif trigger_type == 'interval':
+        try:
+            seconds = int(trigger_value)
+            if seconds <= 0:
+                raise ValueError('间隔时间必须大于 0')
+        except ValueError:
+            raise ValueError(f'间隔时间必须是正整数')
+        return True
+    else:
+        raise ValueError(f'未知触发类型: {trigger_type}')
+
+
+def preview_trigger_times(trigger_type, trigger_value, count=5, timezone=None):
+    if timezone is None:
+        timezone = datetime.timezone(datetime.timedelta(hours=8))
+    if isinstance(timezone, str):
+        import pytz
+        timezone = pytz.timezone(timezone)
+
+    times = []
+    now = datetime.datetime.now(timezone)
+
+    if trigger_type == 'cron':
+        try:
+            cron = croniter(trigger_value, now)
+            for _ in range(count):
+                next_dt = cron.get_next(datetime.datetime)
+                times.append(next_dt.isoformat())
+        except Exception:
+            pass
+    elif trigger_type == 'interval':
+        try:
+            seconds = int(trigger_value)
+            for i in range(1, count + 1):
+                times.append((now + datetime.timedelta(seconds=seconds * i)).isoformat())
+        except Exception:
+            pass
+
+    return times
 
 
 class SchedulerManager:
@@ -59,27 +111,23 @@ class SchedulerManager:
             execution.end_time = datetime.datetime.now(datetime.UTC)
             db.session.commit()
 
-            task = Task.query.get(int(job_id.split('_')[0]))
+            task = Task.query.get(execution.task_id)
             if task:
                 self._send_notification(task, execution)
                 self._trigger_dependent_tasks(task, execution)
 
     def _build_trigger(self, task):
+        validate_trigger(task.trigger_type, task.trigger_value,
+                         self.app.config.get('SCHEDULER_TIMEZONE', 'Asia/Shanghai'))
         if task.trigger_type == 'cron':
             parts = task.trigger_value.strip().split()
-            if len(parts) == 5:
-                return CronTrigger(
-                    minute=parts[0], hour=parts[1], day=parts[2],
-                    month=parts[3], day_of_week=parts[4],
-                    timezone=self.app.config.get('SCHEDULER_TIMEZONE', 'Asia/Shanghai')
-                )
-            raise ValueError(f'Invalid cron expression: {task.trigger_value}')
+            return CronTrigger(
+                minute=parts[0], hour=parts[1], day=parts[2],
+                month=parts[3], day_of_week=parts[4],
+                timezone=self.app.config.get('SCHEDULER_TIMEZONE', 'Asia/Shanghai')
+            )
         elif task.trigger_type == 'interval':
-            try:
-                seconds = int(task.trigger_value)
-                return IntervalTrigger(seconds=seconds)
-            except ValueError:
-                raise ValueError(f'Invalid interval value: {task.trigger_value}')
+            return IntervalTrigger(seconds=int(task.trigger_value))
         else:
             raise ValueError(f'Unknown trigger type: {task.trigger_type}')
 
@@ -118,7 +166,7 @@ class SchedulerManager:
         except Exception:
             pass
 
-    def run_job_now(self, task_id):
+    def run_job_now(self, task_id, trigger_source_execution_id=None):
         with self.app.app_context():
             from models import db, Task
             task = db.session.get(Task, task_id)
@@ -127,11 +175,12 @@ class SchedulerManager:
             self.scheduler.add_job(
                 func=self._execute_task,
                 args=[task.id],
+                kwargs={'trigger_source_execution_id': trigger_source_execution_id},
                 id=f'manual_{task.id}_{datetime.datetime.now(datetime.UTC).timestamp()}',
                 name=f'Manual: {task.name}',
             )
 
-    def _execute_task(self, task_id, retry_attempt=0):
+    def _execute_task(self, task_id, retry_attempt=0, trigger_source_execution_id=None):
         with self.app.app_context():
             from models import db, Task, Execution
             task = db.session.get(Task, task_id)
@@ -143,11 +192,18 @@ class SchedulerManager:
             except Exception:
                 return
 
+            trigger_type = 'manual'
+            if trigger_source_execution_id:
+                trigger_type = 'dependency'
+            elif retry_attempt > 0:
+                trigger_type = 'retry'
+
             execution = Execution(
                 task_id=task.id,
                 start_time=datetime.datetime.now(datetime.UTC),
                 status='running',
-                trigger_type='manual' if retry_attempt > 0 else 'scheduled',
+                trigger_type=trigger_type,
+                trigger_source_execution_id=trigger_source_execution_id,
                 retry_attempt=retry_attempt,
             )
             db.session.add(execution)
@@ -213,7 +269,7 @@ class SchedulerManager:
                     db.session.commit()
                     import time
                     time.sleep(task.retry_delay_seconds)
-                    self._execute_task(task_id, retry_attempt + 1)
+                    self._execute_task(task_id, retry_attempt + 1, trigger_source_execution_id)
                 else:
                     execution.status = 'failed'
                     execution.end_time = datetime.datetime.now(datetime.UTC)
@@ -281,7 +337,7 @@ class SchedulerManager:
             from models import db, Task
             dependent_tasks = Task.query.filter_by(depends_on=task.id, enabled=True, paused=False).all()
             for dt in dependent_tasks:
-                self.run_job_now(dt.id)
+                self.run_job_now(dt.id, trigger_source_execution_id=execution.id)
 
     def get_scheduler_status(self):
         if not self.scheduler:

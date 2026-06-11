@@ -52,6 +52,43 @@ class Task(db.Model):
     def set_env_vars(self, env_dict):
         self.env_vars = json.dumps(env_dict or {})
 
+    def get_dependency_chain(self):
+        chain = []
+        visited = set()
+        current = self
+        while current and current.depends_on and current.depends_on not in visited:
+            visited.add(current.id)
+            dep = db.session.get(Task, current.depends_on)
+            if dep:
+                chain.insert(0, {'id': dep.id, 'name': dep.name})
+                current = dep
+            else:
+                break
+        return chain
+
+    def get_dependents(self):
+        return Task.query.filter_by(depends_on=self.id).all()
+
+    def check_circular_dependency(self, target_depends_on):
+        if not target_depends_on:
+            return False
+        if self.id and target_depends_on == self.id:
+            return True
+        if not self.id:
+            return False
+        visited = {self.id}
+        current_id = target_depends_on
+        while current_id:
+            if current_id in visited:
+                return True
+            visited.add(current_id)
+            dep_task = db.session.get(Task, current_id)
+            if dep_task and dep_task.depends_on:
+                current_id = dep_task.depends_on
+            else:
+                break
+        return False
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -84,6 +121,7 @@ class Execution(db.Model):
     end_time = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(20), nullable=False, default='running')
     trigger_type = db.Column(db.String(20), default='scheduled')
+    trigger_source_execution_id = db.Column(db.Integer, nullable=True)
     output_log = db.Column(db.Text, default='')
     retry_attempt = db.Column(db.Integer, default=0)
 
@@ -96,6 +134,7 @@ class Execution(db.Model):
             'end_time': self.end_time.isoformat() if self.end_time else None,
             'status': self.status,
             'trigger_type': self.trigger_type,
+            'trigger_source_execution_id': self.trigger_source_execution_id,
             'output_log': self.output_log,
             'retry_attempt': self.retry_attempt,
         }

@@ -17,7 +17,10 @@
         <option value="running" {% if selected_status == 'running' %}selected{% endif %}>运行中</option>
         <option value="retrying" {% if selected_status == 'retrying' %}selected{% endif %}>重试中</option>
     </select>
-    <button type="submit" class="btn btn-sm">筛选</button>
+    <input type="date" name="date_from" value="{{ selected_date_from or '' }}" title="开始日期">
+    <input type="date" name="date_to" value="{{ selected_date_to or '' }}" title="结束日期">
+    <button type="submit" class="btn btn-sm btn-primary">筛选</button>
+    <a href="{{ url_for('web.execution_history') }}" class="btn btn-sm">清除</a>
 </form>
 
 {% if executions %}
@@ -31,7 +34,7 @@
             <th>耗时</th>
             <th>状态</th>
             <th>触发方式</th>
-            <th>重试</th>
+            <th>触发来源</th>
             <th>操作</th>
         </tr>
     </thead>
@@ -48,10 +51,27 @@
                 {% else %}-{% endif %}
             </td>
             <td><span class="status-badge status-{{ exec.status }}">{{ exec.status }}</span></td>
-            <td>{{ exec.trigger_type }}</td>
-            <td>{{ exec.retry_attempt }}</td>
             <td>
+                {% if exec.trigger_type == 'dependency' %}
+                <span class="trigger-label trigger-dep">依赖触发</span>
+                {% elif exec.trigger_type == 'manual' %}
+                <span class="trigger-label trigger-manual">手动</span>
+                {% elif exec.trigger_type == 'retry' %}
+                <span class="trigger-label trigger-retry">重试</span>
+                {% else %}
+                <span class="trigger-label trigger-sched">定时</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if exec.trigger_source_execution_id %}
+                <a href="{{ url_for('web.execution_detail', execution_id=exec.trigger_source_execution_id) }}" class="btn btn-sm">#{{ exec.trigger_source_execution_id }}</a>
+                {% else %}-{% endif %}
+            </td>
+            <td class="action-cell">
                 <a href="{{ url_for('web.execution_detail', execution_id=exec.id) }}" class="btn btn-sm">详情</a>
+                {% if exec.status == 'failed' and exec.task %}
+                <button class="btn btn-sm btn-success" onclick="reExecute('{{ exec.task_id }}')">重新执行</button>
+                {% endif %}
             </td>
         </tr>
         {% endfor %}
@@ -60,4 +80,13 @@
 {% else %}
 <p class="empty-hint">暂无执行记录</p>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function reExecute(taskId) {
+    await apiCall('/api/tasks/' + taskId + '/execute', { method: 'POST' });
+    location.reload();
+}
+</script>
 {% endblock %}

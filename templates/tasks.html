@@ -16,6 +16,7 @@
             <th>描述</th>
             <th>触发器</th>
             <th>执行类型</th>
+            <th>依赖链</th>
             <th>状态</th>
             <th>操作</th>
         </tr>
@@ -29,12 +30,26 @@
             <td>{{ task.trigger_type }}: {{ task.trigger_value }}</td>
             <td>{{ task.execute_type }}</td>
             <td>
+                {% if task_chains.get(task.id) %}
+                <span class="dep-chain">
+                    {% for dep in task_chains[task.id] %}
+                    <span class="dep-link">→ {{ dep.name }}</span>
+                    {% endfor %}
+                </span>
+                {% if task.get_dependents() %}
+                <br><small class="dep-downstream">下游: {% for d in task.get_dependents() %}{{ d.name }}{% if not loop.last %}, {% endif %}{% endfor %}</small>
+                {% endif %}
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>
                 {% if task.paused %}
                 <span class="status-badge status-paused">已暂停</span>
-                {% elif task.enabled %}
-                <span class="status-badge status-success">运行中</span>
-                {% else %}
+                {% elif not task.enabled %}
                 <span class="status-badge status-failed">已禁用</span>
+                {% else %}
+                <span class="status-badge status-success">运行中</span>
                 {% endif %}
             </td>
             <td class="action-cell">
@@ -54,7 +69,9 @@
 {% else %}
 <p class="empty-hint">暂无任务，<a href="{{ url_for('web.create_task') }}">创建第一个任务</a></p>
 {% endif %}
+{% endblock %}
 
+{% block scripts %}
 <script>
 async function executeTask(id) {
     await apiCall('/api/tasks/' + id + '/execute', { method: 'POST' });

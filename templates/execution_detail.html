@@ -14,8 +14,23 @@
     </div>
     <div class="detail-item">
         <span class="detail-label">触发方式</span>
-        <span class="detail-value">{{ execution.trigger_type }}</span>
+        <span class="detail-value">
+            {% if execution.trigger_type == 'dependency' %}依赖触发
+            {% elif execution.trigger_type == 'manual' %}手动执行
+            {% elif execution.trigger_type == 'retry' %}自动重试
+            {% else %}定时调度{% endif %}
+        </span>
     </div>
+    {% if source_execution %}
+    <div class="detail-item">
+        <span class="detail-label">触发来源</span>
+        <span class="detail-value">
+            <a href="{{ url_for('web.execution_detail', execution_id=source_execution.id) }}">
+                #{{ source_execution.id }} - {{ source_execution.task.name if source_execution.task else '已删除' }}
+            </a>
+        </span>
+    </div>
+    {% endif %}
     <div class="detail-item">
         <span class="detail-label">重试次数</span>
         <span class="detail-value">{{ execution.retry_attempt }}</span>
@@ -43,5 +58,19 @@
 
 <div class="form-actions">
     <a href="{{ url_for('web.execution_history') }}" class="btn">返回历史记录</a>
+    <a href="{{ url_for('api.download_execution_log', execution_id=execution.id) }}" class="btn btn-primary">下载日志文件</a>
+    {% if execution.status == 'failed' and execution.task %}
+    <button class="btn btn-success" onclick="reExecute('{{ execution.task_id }}')">重新执行此任务</button>
+    {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function reExecute(taskId) {
+    await apiCall('/api/tasks/' + taskId + '/execute', { method: 'POST' });
+    alert('已触发重新执行');
+    location.reload();
+}
+</script>
 {% endblock %}
