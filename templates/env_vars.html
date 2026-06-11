@@ -44,12 +44,18 @@
         <tr>
             <td>{{ ev.id }}</td>
             <td><code>{{ ev.key }}</code></td>
-            <td><code>{{ ev.value[:50] }}{% if ev.value|length > 50 %}...{% endif %}</code></td>
+            <td><code>{{ ev.value[:80] }}{% if ev.value|length > 80 %}...{% endif %}</code></td>
             <td>{{ ev.description[:50] if ev.description else '-' }}</td>
             <td>{{ ev.updated_at.strftime('%Y-%m-%d %H:%M') if ev.updated_at else '-' }}</td>
             <td class="action-cell">
-                <button class="btn btn-sm" onclick="editEnvVar({{ ev.id }}, '{{ ev.key | e }}', '{{ ev.value | e }}', '{{ ev.description | e }}')">编辑</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteEnvVar({{ ev.id }})">删除</button>
+                <button class="btn btn-sm ev-edit-btn"
+                    data-id="{{ ev.id }}"
+                    data-key="{{ ev.key | e }}"
+                    data-value="{{ ev.value | e }}"
+                    data-desc="{{ ev.description | e }}">
+                    编辑
+                </button>
+                <button class="btn btn-sm btn-danger ev-del-btn" data-id="{{ ev.id }}">删除</button>
             </td>
         </tr>
         {% endfor %}
@@ -114,5 +120,23 @@ async function deleteEnvVar(id) {
     await apiCall('/api/env-vars/' + id, { method: 'DELETE' });
     location.reload();
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.ev-edit-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            editEnvVar(
+                this.getAttribute('data-id'),
+                this.getAttribute('data-key'),
+                this.getAttribute('data-value'),
+                this.getAttribute('data-desc')
+            );
+        });
+    });
+    document.querySelectorAll('.ev-del-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            deleteEnvVar(this.getAttribute('data-id'));
+        });
+    });
+});
 </script>
 {% endblock %}

@@ -30,18 +30,20 @@
             <td>{{ task.trigger_type }}: {{ task.trigger_value }}</td>
             <td>{{ task.execute_type }}</td>
             <td>
-                {% if task_chains.get(task.id) %}
+                {% set up_chain = task_chains.get(task.id) %}
+                {% set down_list = task_deps.get(task.id) %}
+                {% if up_chain %}
                 <span class="dep-chain">
-                    {% for dep in task_chains[task.id] %}
-                    <span class="dep-link">→ {{ dep.name }}</span>
+                    {% for dep in up_chain %}
+                    <span class="dep-link">← {{ dep.name }}</span>
                     {% endfor %}
                 </span>
-                {% if task.get_dependents() %}
-                <br><small class="dep-downstream">下游: {% for d in task.get_dependents() %}{{ d.name }}{% if not loop.last %}, {% endif %}{% endfor %}</small>
                 {% endif %}
-                {% else %}
-                -
+                {% if down_list %}
+                {% if up_chain %}<br>{% endif %}
+                <small class="dep-downstream">下游: {% for d in down_list %}<span class="dep-link">{{ d.name }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</small>
                 {% endif %}
+                {% if not up_chain and not down_list %}-{% endif %}
             </td>
             <td>
                 {% if task.paused %}

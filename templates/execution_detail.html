@@ -18,6 +18,7 @@
             {% if execution.trigger_type == 'dependency' %}依赖触发
             {% elif execution.trigger_type == 'manual' %}手动执行
             {% elif execution.trigger_type == 'retry' %}自动重试
+            {% elif execution.trigger_type == 'scheduled' %}定时调度
             {% else %}定时调度{% endif %}
         </span>
     </div>
@@ -54,11 +55,22 @@
 </div>
 
 <h2>输出日志</h2>
-<pre class="log-viewer">{{ execution.output_log or '(无输出)' }}</pre>
+{% set log_content = execution.output_log or '(无输出)' %}
+{% if log_content | length > 2000 %}
+<div class="log-toolbar">
+    <button class="btn btn-sm" onclick="toggleLog()" id="log-toggle-btn">展开完整日志 ({{ log_content | length }} 字符)</button>
+    <a href="{{ url_for('api.download_execution_log', execution_id=execution.id) }}" class="btn btn-sm btn-primary">下载完整日志</a>
+</div>
+<pre class="log-viewer" id="log-viewer">{{ log_content[:2000] }}<span id="log-ellipsis">...<br><br></span><span id="log-full" style="display:none;">{{ log_content[2000:] }}</span></pre>
+{% else %}
+<div class="log-toolbar">
+    <a href="{{ url_for('api.download_execution_log', execution_id=execution.id) }}" class="btn btn-sm btn-primary">下载日志文件</a>
+</div>
+<pre class="log-viewer">{{ log_content }}</pre>
+{% endif %}
 
 <div class="form-actions">
     <a href="{{ url_for('web.execution_history') }}" class="btn">返回历史记录</a>
-    <a href="{{ url_for('api.download_execution_log', execution_id=execution.id) }}" class="btn btn-primary">下载日志文件</a>
     {% if execution.status == 'failed' and execution.task %}
     <button class="btn btn-success" onclick="reExecute('{{ execution.task_id }}')">重新执行此任务</button>
     {% endif %}
@@ -67,6 +79,23 @@
 
 {% block scripts %}
 <script>
+var logExpanded = false;
+function toggleLog() {
+    logExpanded = !logExpanded;
+    var full = document.getElementById('log-full');
+    var ellipsis = document.getElementById('log-ellipsis');
+    var btn = document.getElementById('log-toggle-btn');
+    if (logExpanded) {
+        full.style.display = 'inline';
+        ellipsis.style.display = 'none';
+        btn.textContent = '收起完整日志';
+    } else {
+        full.style.display = 'none';
+        ellipsis.style.display = 'inline';
+        btn.textContent = '展开完整日志';
+    }
+}
+
 async function reExecute(taskId) {
     await apiCall('/api/tasks/' + taskId + '/execute', { method: 'POST' });
     alert('已触发重新执行');

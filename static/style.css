@@ -465,6 +465,12 @@ tr:hover {
     word-break: break-all;
 }
 
+.log-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
 .empty-hint {
     color: #9ca3af;
     font-size: 14px;

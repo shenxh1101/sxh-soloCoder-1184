@@ -38,11 +38,15 @@ def index():
 def list_tasks():
     tasks = Task.query.order_by(Task.created_at.desc()).all()
     task_chains = {}
+    task_deps = {}
     for t in tasks:
         chain = t.get_dependency_chain()
         if chain:
             task_chains[t.id] = chain
-    return render_template('tasks.html', tasks=tasks, task_chains=task_chains)
+        deps = t.get_dependents()
+        if deps:
+            task_deps[t.id] = deps
+    return render_template('tasks.html', tasks=tasks, task_chains=task_chains, task_deps=task_deps)
 
 
 @web_bp.route('/tasks/create', methods=['GET', 'POST'])

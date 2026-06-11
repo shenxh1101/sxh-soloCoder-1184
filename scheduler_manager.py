@@ -138,6 +138,7 @@ class SchedulerManager:
             func=self._execute_task,
             trigger=trigger,
             args=[task.id],
+            kwargs={'_trigger_type': 'scheduled'},
             id=job_id,
             name=task.name,
             replace_existing=True,
@@ -172,15 +173,19 @@ class SchedulerManager:
             task = db.session.get(Task, task_id)
             if not task:
                 raise ValueError(f'Task {task_id} not found')
+            trigger_type = 'dependency' if trigger_source_execution_id else 'manual'
             self.scheduler.add_job(
                 func=self._execute_task,
                 args=[task.id],
-                kwargs={'trigger_source_execution_id': trigger_source_execution_id},
+                kwargs={
+                    '_trigger_type': trigger_type,
+                    'trigger_source_execution_id': trigger_source_execution_id,
+                },
                 id=f'manual_{task.id}_{datetime.datetime.now(datetime.UTC).timestamp()}',
                 name=f'Manual: {task.name}',
             )
 
-    def _execute_task(self, task_id, retry_attempt=0, trigger_source_execution_id=None):
+    def _execute_task(self, task_id, retry_attempt=0, trigger_source_execution_id=None, _trigger_type=None):
         with self.app.app_context():
             from models import db, Task, Execution
             task = db.session.get(Task, task_id)
@@ -192,11 +197,14 @@ class SchedulerManager:
             except Exception:
                 return
 
-            trigger_type = 'manual'
-            if trigger_source_execution_id:
+            if _trigger_type:
+                trigger_type = _trigger_type
+            elif trigger_source_execution_id:
                 trigger_type = 'dependency'
             elif retry_attempt > 0:
                 trigger_type = 'retry'
+            else:
+                trigger_type = 'scheduled'
 
             execution = Execution(
                 task_id=task.id,
@@ -251,8 +259,7 @@ class SchedulerManager:
                         )
 
                 output = output_buffer.getvalue()
-                max_len = self.app.config.get('MAX_EXECUTION_LOG_LENGTH', 5000)
-                execution.output_log = output[-max_len:] if len(output) > max_len else output
+                execution.output_log = output
                 execution.status = 'success'
                 execution.end_time = datetime.datetime.now(datetime.UTC)
                 db.session.commit()
@@ -260,8 +267,7 @@ class SchedulerManager:
             except Exception as e:
                 output = output_buffer.getvalue()
                 output += f'\n[ERROR] {traceback.format_exc()}'
-                max_len = self.app.config.get('MAX_EXECUTION_LOG_LENGTH', 5000)
-                execution.output_log = output[-max_len:] if len(output) > max_len else output
+                execution.output_log = output
 
                 if task.retry_count > 0 and retry_attempt < task.retry_count:
                     execution.status = 'retrying'
@@ -269,7 +275,7 @@ class SchedulerManager:
                     db.session.commit()
                     import time
                     time.sleep(task.retry_delay_seconds)
-                    self._execute_task(task_id, retry_attempt + 1, trigger_source_execution_id)
+                    self._execute_task(task_id, retry_attempt + 1, trigger_source_execution_id, _trigger_type='retry')
                 else:
                     execution.status = 'failed'
                     execution.end_time = datetime.datetime.now(datetime.UTC)
