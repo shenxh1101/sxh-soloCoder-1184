@@ -27,6 +27,8 @@ class Task(db.Model):
     enabled = db.Column(db.Boolean, default=True)
     paused = db.Column(db.Boolean, default=False)
 
+    concurrency_mode = db.Column(db.String(20), default='skip')
+
     retry_count = db.Column(db.Integer, default=0)
     retry_delay_seconds = db.Column(db.Integer, default=60)
 
@@ -89,6 +91,76 @@ class Task(db.Model):
                 break
         return False
 
+    def get_full_dependency_tree(self):
+        def collect_upstream(task, visited):
+            if not task or task.id in visited:
+                return
+            visited.add(task.id)
+            if task.depends_on:
+                dep = db.session.get(Task, task.depends_on)
+                if dep:
+                    upstream[dep.id] = {'id': dep.id, 'name': dep.name, 'enabled': dep.enabled, 'paused': dep.paused}
+                    collect_upstream(dep, visited)
+
+        def collect_downstream(task, visited):
+            if not task or task.id in visited:
+                return
+            visited.add(task.id)
+            for d in Task.query.filter_by(depends_on=task.id).all():
+                downstream[d.id] = {'id': d.id, 'name': d.name, 'enabled': d.enabled, 'paused': d.paused}
+                collect_downstream(d, visited)
+
+        upstream = {}
+        downstream = {}
+        collect_upstream(self, set())
+        collect_downstream(self, set())
+        return {'upstream': list(upstream.values()), 'downstream': list(downstream.values())}
+
+    def get_stats(self):
+        total = Execution.query.filter_by(task_id=self.id).count()
+        if total == 0:
+            return {
+                'total_executions': 0, 'success_rate': None, 'avg_duration_s': None,
+                'consecutive_failures': 0, 'last_failure_reason': None,
+            }
+
+        successes = Execution.query.filter_by(task_id=self.id, status='success').count()
+        success_rate = round(successes / total * 100, 1) if total > 0 else None
+
+        finished = Execution.query.filter(
+            Execution.task_id == self.id,
+            Execution.end_time.isnot(None),
+            Execution.start_time.isnot(None),
+        ).all()
+
+        avg_duration = None
+        if finished:
+            total_s = sum((e.end_time - e.start_time).total_seconds() for e in finished)
+            avg_duration = round(total_s / len(finished), 2)
+
+        consecutive = 0
+        recent = Execution.query.filter_by(task_id=self.id).order_by(Execution.start_time.desc()).all()
+        for e in recent:
+            if e.status == 'failed':
+                consecutive += 1
+            elif e.status in ('success', 'skipped'):
+                break
+
+        last_failure = Execution.query.filter_by(task_id=self.id, status='failed') \
+            .order_by(Execution.start_time.desc()).first()
+        last_reason = None
+        if last_failure and last_failure.output_log:
+            lines = last_failure.output_log.strip().split('\n')
+            last_reason = lines[-1][:200] if lines else None
+
+        return {
+            'total_executions': total,
+            'success_rate': success_rate,
+            'avg_duration_s': avg_duration,
+            'consecutive_failures': consecutive,
+            'last_failure_reason': last_reason,
+        }
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -100,6 +172,7 @@ class Task(db.Model):
             'execute_content': self.execute_content,
             'enabled': self.enabled,
             'paused': self.paused,
+            'concurrency_mode': self.concurrency_mode,
             'retry_count': self.retry_count,
             'retry_delay_seconds': self.retry_delay_seconds,
             'notify_email': self.notify_email,
@@ -124,6 +197,7 @@ class Execution(db.Model):
     trigger_source_execution_id = db.Column(db.Integer, nullable=True)
     output_log = db.Column(db.Text, default='')
     retry_attempt = db.Column(db.Integer, default=0)
+    skip_reason = db.Column(db.String(500), default='')
 
     def to_dict(self):
         return {
@@ -137,6 +211,7 @@ class Execution(db.Model):
             'trigger_source_execution_id': self.trigger_source_execution_id,
             'output_log': self.output_log,
             'retry_attempt': self.retry_attempt,
+            'skip_reason': self.skip_reason,
         }
 
 

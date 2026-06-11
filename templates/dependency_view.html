@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}{{ task.name }} - 依赖视图 - 任务调度看板{% endblock %}
+{% block content %}
+<div class="detail-header">
+    <h1>依赖视图：{{ task.name }}</h1>
+    <div class="detail-header-actions">
+        <a href="{{ url_for('web.task_detail', task_id=task.id) }}" class="btn">任务详情</a>
+        <a href="{{ url_for('web.list_tasks') }}" class="btn">返回列表</a>
+    </div>
+</div>
+
+<div class="dep-view-panels">
+
+    <div class="dep-panel">
+        <h2>上游依赖链</h2>
+        {% if upstream_nodes %}
+        <div class="dep-tree">
+            {% for node in upstream_nodes %}
+            <div class="dep-tree-node">
+                <div class="dep-node-connector">↑</div>
+                <div class="dep-node-card">
+                    <div class="dep-node-header">
+                        <a href="{{ url_for('web.task_detail', task_id=node.task.id) }}" class="dep-node-name">{{ node.task.name }}</a>
+                        <span class="status-badge {% if not node.task.enabled %}status-failed{% elif node.task.paused %}status-paused{% else %}status-success{% endif %}">
+                            {% if not node.task.enabled %}禁用{% elif node.task.paused %}暂停{% else %}运行{% endif %}
+                        </span>
+                    </div>
+                    <div class="dep-node-meta">
+                        <span class="dep-node-trigger">{{ node.task.trigger_type }}: {{ node.task.trigger_value }}</span>
+                    </div>
+                    {% if node.stats.total_executions > 0 %}
+                    <div class="dep-node-stats">
+                        <span class="dep-stat-item">成功率: <strong>{{ node.stats.success_rate if node.stats.success_rate is not none else '-' }}%</strong></span>
+                        <span class="dep-stat-item">连续失败: <strong class="{% if node.stats.consecutive_failures > 0 %}text-danger{% endif %}">{{ node.stats.consecutive_failures }}</strong></span>
+                    </div>
+                    {% endif %}
+                    {% if node.last_execution %}
+                    <div class="dep-node-last">
+                        最近执行: #{{ node.last_execution.id }}
+                        <span class="status-badge status-{{ node.last_execution.status }}">{{ node.last_execution.status }}</span>
+                        <span class="dep-node-time">{{ node.last_execution.start_time.strftime('%m-%d %H:%M') if node.last_execution.start_time else '-' }}</span>
+                        <a href="{{ url_for('web.execution_detail', execution_id=node.last_execution.id) }}" class="btn btn-sm">查看</a>
+                        <a href="{{ url_for('web.execution_history', task_id=node.task.id) }}" class="btn btn-sm">历史</a>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% if not loop.last %}
+            <div class="dep-tree-line"></div>
+            {% endif %}
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-hint">无上游依赖</p>
+        {% endif %}
+    </div>
+
+    <div class="dep-panel dep-panel-center">
+        <h2>当前任务</h2>
+        <div class="dep-tree">
+            <div class="dep-tree-node dep-tree-node-current">
+                <div class="dep-node-card dep-node-card-current">
+                    <div class="dep-node-header">
+                        <span class="dep-node-name dep-node-self">{{ task.name }}</span>
+                        <span class="status-badge {% if not task.enabled %}status-failed{% elif task.paused %}status-paused{% else %}status-success{% endif %}">
+                            {% if not task.enabled %}禁用{% elif task.paused %}暂停{% else %}运行{% endif %}
+                        </span>
+                    </div>
+                    <div class="dep-node-meta">
+                        <span class="dep-node-trigger">{{ task.trigger_type }}: {{ task.trigger_value }}</span>
+                        <span class="dep-node-concurrent">并发: {{ task.concurrency_mode }}</span>
+                    </div>
+                    {% if task_stats.total_executions > 0 %}
+                    <div class="dep-node-stats">
+                        <span class="dep-stat-item">成功率: <strong>{{ task_stats.success_rate if task_stats.success_rate is not none else '-' }}%</strong></span>
+                        <span class="dep-stat-item">平均耗时: <strong>{{ task_stats.avg_duration_s if task_stats.avg_duration_s is not none else '-' }}s</strong></span>
+                        <span class="dep-stat-item">连续失败: <strong class="{% if task_stats.consecutive_failures > 0 %}text-danger{% endif %}">{{ task_stats.consecutive_failures }}</strong></span>
+                    </div>
+                    {% endif %}
+                    {% if last_execution %}
+                    <div class="dep-node-last">
+                        最近执行: #{{ last_execution.id }}
+                        <span class="status-badge status-{{ last_execution.status }}">{{ last_execution.status }}</span>
+                        <span class="dep-node-time">{{ last_execution.start_time.strftime('%m-%d %H:%M') if last_execution.start_time else '-' }}</span>
+                        <a href="{{ url_for('web.execution_detail', execution_id=last_execution.id) }}" class="btn btn-sm">查看</a>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="dep-panel">
+        <h2>下游依赖链</h2>
+        {% if downstream_nodes %}
+        <div class="dep-tree">
+            {% for node in downstream_nodes %}
+            <div class="dep-tree-line"></div>
+            <div class="dep-tree-node">
+                <div class="dep-node-connector">↓</div>
+                <div class="dep-node-card">
+                    <div class="dep-node-header">
+                        <a href="{{ url_for('web.task_detail', task_id=node.task.id) }}" class="dep-node-name">{{ node.task.name }}</a>
+                        <span class="status-badge {% if not node.task.enabled %}status-failed{% elif node.task.paused %}status-paused{% else %}status-success{% endif %}">
+                            {% if not node.task.enabled %}禁用{% elif node.task.paused %}暂停{% else %}运行{% endif %}
+                        </span>
+                    </div>
+                    <div class="dep-node-meta">
+                        <span class="dep-node-trigger">{{ node.task.trigger_type }}: {{ node.task.trigger_value }}</span>
+                    </div>
+                    {% if node.stats.total_executions > 0 %}
+                    <div class="dep-node-stats">
+                        <span class="dep-stat-item">成功率: <strong>{{ node.stats.success_rate if node.stats.success_rate is not none else '-' }}%</strong></span>
+                        <span class="dep-stat-item">连续失败: <strong class="{% if node.stats.consecutive_failures > 0 %}text-danger{% endif %}">{{ node.stats.consecutive_failures }}</strong></span>
+                    </div>
+                    {% endif %}
+                    {% if node.last_execution %}
+                    <div class="dep-node-last">
+                        最近执行: #{{ node.last_execution.id }}
+                        <span class="status-badge status-{{ node.last_execution.status }}">{{ node.last_execution.status }}</span>
+                        <span class="dep-node-time">{{ node.last_execution.start_time.strftime('%m-%d %H:%M') if node.last_execution.start_time else '-' }}</span>
+                        <a href="{{ url_for('web.execution_detail', execution_id=node.last_execution.id) }}" class="btn btn-sm">查看</a>
+                        <a href="{{ url_for('web.execution_history', task_id=node.task.id) }}" class="btn btn-sm">历史</a>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-hint">无下游依赖</p>
+        {% endif %}
+    </div>
+
+</div>
+
+<h2>执行内容</h2>
+<pre class="log-viewer" style="max-height:200px;">{{ task.execute_content }}</pre>
+
+<div class="form-actions">
+    <a href="{{ url_for('web.task_detail', task_id=task.id) }}" class="btn">返回任务详情</a>
+    <a href="{{ url_for('web.list_tasks') }}" class="btn">返回任务列表</a>
+</div>
+{% endblock %}

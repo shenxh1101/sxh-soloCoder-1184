@@ -48,6 +48,7 @@ def create_task():
         execute_content=data.get('execute_content', ''),
         enabled=data.get('enabled', True),
         paused=data.get('paused', False),
+        concurrency_mode=data.get('concurrency_mode', 'skip'),
         retry_count=data.get('retry_count', 0),
         retry_delay_seconds=data.get('retry_delay_seconds', 60),
         notify_email=data.get('notify_email', ''),
@@ -76,7 +77,41 @@ def get_task(task_id):
     result = task.to_dict()
     result['dependency_chain'] = task.get_dependency_chain()
     result['dependents'] = [{'id': d.id, 'name': d.name} for d in task.get_dependents()]
+    result['stats'] = task.get_stats()
     return jsonify(result)
+
+
+@api_bp.route('/tasks/<int:task_id>/stats', methods=['GET'])
+def get_task_stats(task_id):
+    task = db.session.get(Task, task_id)
+    if not task:
+        return jsonify({'error': 'Task not found'}), 404
+    return jsonify(task.get_stats())
+
+
+@api_bp.route('/tasks/<int:task_id>/dependency-view', methods=['GET'])
+def get_dependency_view(task_id):
+    task = db.session.get(Task, task_id)
+    if not task:
+        return jsonify({'error': 'Task not found'}), 404
+
+    tree = task.get_full_dependency_tree()
+    for node in tree['upstream'] + tree['downstream']:
+        t = db.session.get(Task, node['id'])
+        if t:
+            node['stats'] = t.get_stats()
+            last = Execution.query.filter_by(task_id=node['id']).order_by(
+                Execution.start_time.desc()).first()
+            node['last_execution'] = last.to_dict() if last else None
+
+    task_stats = task.get_stats()
+    last = Execution.query.filter_by(task_id=task.id).order_by(Execution.start_time.desc()).first()
+
+    return jsonify({
+        'task': {**task.to_dict(), 'stats': task_stats, 'last_execution': last.to_dict() if last else None},
+        'upstream': tree['upstream'],
+        'downstream': tree['downstream'],
+    })
 
 
 @api_bp.route('/tasks/<int:task_id>', methods=['PUT'])
@@ -111,9 +146,9 @@ def update_task(task_id):
     scheduler_manager.remove_job(task_id, task.name)
 
     for field in ['description', 'trigger_type', 'trigger_value', 'execute_type',
-                   'execute_content', 'enabled', 'paused', 'retry_count',
-                   'retry_delay_seconds', 'notify_email', 'notify_on_success',
-                   'notify_on_failure', 'depends_on']:
+                   'execute_content', 'enabled', 'paused', 'concurrency_mode',
+                   'retry_count', 'retry_delay_seconds', 'notify_email',
+                   'notify_on_success', 'notify_on_failure', 'depends_on']:
         if field in data:
             setattr(task, field, data[field])
 
@@ -359,23 +394,58 @@ def preview_backup():
     else:
         backup_data = data['data']
 
+    existing_tasks = {t.name: t for t in Task.query.all()}
+
+    def _field_diff(existing, new_data):
+        field_map = {
+            'name': '名称', 'description': '描述', 'trigger_type': '触发类型',
+            'trigger_value': '触发值', 'execute_type': '执行类型', 'execute_content': '执行内容',
+            'enabled': '启用', 'paused': '暂停', 'retry_count': '重试次数',
+            'retry_delay_seconds': '重试延迟', 'notify_email': '通知邮箱',
+            'notify_on_success': '成功通知', 'notify_on_failure': '失败通知',
+            'depends_on_name': '依赖任务',
+        }
+        diff_fields = []
+        for key, label in field_map.items():
+            old_val = None
+            new_val = new_data.get(key)
+            if key == 'depends_on_name':
+                old_val = None
+                if existing and existing.depends_on:
+                    dep = db.session.get(Task, existing.depends_on)
+                    old_val = dep.name if dep else str(existing.depends_on)
+            else:
+                old_val = getattr(existing, key, None) if existing else None
+
+            old_str = str(old_val) if old_val is not None else '(无)'
+            new_str = str(new_val) if new_val is not None else '(无)'
+            if old_str != new_str:
+                diff_fields.append({'field': label, 'old': old_str, 'new': new_str})
+        return diff_fields
+
     tasks_preview = []
-    existing_names = {t.name for t in Task.query.all()}
     for t in backup_data.get('tasks', []):
-        tasks_preview.append({
+        existing = existing_tasks.get(t['name'])
+        action = 'update' if existing else 'create'
+        preview_item = {
             'name': t['name'],
             'trigger_type': t.get('trigger_type', 'cron'),
             'trigger_value': t.get('trigger_value', ''),
-            'action': 'update' if t['name'] in existing_names else 'create',
-        })
+            'action': action,
+            'existing_id': existing.id if existing else None,
+        }
+        if action == 'update':
+            preview_item['diff_fields'] = _field_diff(existing, t)
+            preview_item['has_dep_change'] = any(
+                d['field'] == '依赖任务' for d in preview_item['diff_fields']
+            )
+        tasks_preview.append(preview_item)
 
     env_keys = {ev.key for ev in EnvVar.query.all()}
     env_preview = []
     for ev in backup_data.get('env_vars', []):
-        env_preview.append({
-            'key': ev['key'],
-            'action': 'update' if ev['key'] in env_keys else 'create',
-        })
+        action = 'update' if ev['key'] in env_keys else 'create'
+        env_preview.append({'key': ev['key'], 'action': action})
 
     return jsonify({
         'tasks': tasks_preview,
@@ -383,6 +453,7 @@ def preview_backup():
         'summary': {
             'tasks_create': sum(1 for t in tasks_preview if t['action'] == 'create'),
             'tasks_update': sum(1 for t in tasks_preview if t['action'] == 'update'),
+            'tasks_with_dep_change': sum(1 for t in tasks_preview if t.get('has_dep_change')),
             'env_vars_create': sum(1 for e in env_preview if e['action'] == 'create'),
             'env_vars_update': sum(1 for e in env_preview if e['action'] == 'update'),
         }
@@ -392,11 +463,18 @@ def preview_backup():
 @api_bp.route('/backup/restore', methods=['POST'])
 def restore_backup():
     data = request.get_json()
+    affected_task_ids = []
+
     if data and 'data' in data:
         try:
             results = restore_from_dict(db, Task, EnvVar, data['data'])
             scheduler_manager.reload_all_jobs()
-            return jsonify({'message': 'Restore completed', 'results': results})
+            affected_task_ids = _get_affected_ids(data['data'])
+            return jsonify({
+                'message': 'Restore completed',
+                'results': results,
+                'affected_task_ids': affected_task_ids,
+            })
         except Exception as e:
             db.session.rollback()
             return jsonify({'error': str(e)}), 500
@@ -411,12 +489,25 @@ def restore_backup():
         try:
             results = restore_from_file(db, Task, EnvVar, filepath)
             scheduler_manager.reload_all_jobs()
-            return jsonify({'message': 'Restore completed', 'results': results})
+            return jsonify({
+                'message': 'Restore completed',
+                'results': results,
+                'affected_task_ids': affected_task_ids,
+            })
         except Exception as e:
             db.session.rollback()
             return jsonify({'error': str(e)}), 500
 
     return jsonify({'error': 'No backup data or filename provided'}), 400
+
+
+def _get_affected_ids(data):
+    ids = []
+    existing = {t.name: t.id for t in Task.query.all()}
+    for t in data.get('tasks', []):
+        if t['name'] in existing:
+            ids.append(existing[t['name']])
+    return ids
 
 
 @api_bp.route('/backup/export', methods=['GET'])

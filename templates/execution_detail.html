@@ -10,7 +10,15 @@
     </div>
     <div class="detail-item">
         <span class="detail-label">状态</span>
-        <span class="detail-value"><span class="status-badge status-{{ execution.status }}">{{ execution.status }}</span></span>
+        <span class="detail-value">
+            {% if execution.status == 'skipped' %}
+            <span class="status-badge status-paused">跳过</span>
+            {% elif execution.status == 'cancelled' %}
+            <span class="status-badge status-failed">已取消</span>
+            {% else %}
+            <span class="status-badge status-{{ execution.status }}">{{ execution.status }}</span>
+            {% endif %}
+        </span>
     </div>
     <div class="detail-item">
         <span class="detail-label">触发方式</span>
@@ -30,6 +38,12 @@
                 #{{ source_execution.id }} - {{ source_execution.task.name if source_execution.task else '已删除' }}
             </a>
         </span>
+    </div>
+    {% endif %}
+    {% if execution.status == 'skipped' and execution.skip_reason %}
+    <div class="detail-item">
+        <span class="detail-label">跳过原因</span>
+        <span class="detail-value">{{ execution.skip_reason }}</span>
     </div>
     {% endif %}
     <div class="detail-item">

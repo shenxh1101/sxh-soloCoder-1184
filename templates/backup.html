@@ -95,18 +95,39 @@ async function showPreview(payload) {
 
     var html = '<div class="preview-summary">';
     html += '将<strong>新增</strong> ' + resp.summary.tasks_create + ' 个任务，';
-    html += '<strong>更新</strong> ' + resp.summary.tasks_update + ' 个任务；';
-    html += '新增 ' + resp.summary.env_vars_create + ' 个环境变量，';
+    html += '<strong>更新</strong> ' + resp.summary.tasks_update + ' 个任务';
+    if (resp.summary.tasks_with_dep_change > 0) {
+        html += '（其中 <strong>' + resp.summary.tasks_with_dep_change + ' 个</strong> 涉及依赖变更）';
+    }
+    html += '；新增 ' + resp.summary.env_vars_create + ' 个环境变量，';
     html += '更新 ' + resp.summary.env_vars_update + ' 个环境变量。';
     html += '</div>';
 
     if (resp.tasks.length > 0) {
-        html += '<h3>任务变更</h3><table><thead><tr><th>任务名</th><th>触发器</th><th>操作</th></tr></thead><tbody>';
+        html += '<h3>任务变更详情</h3>';
         resp.tasks.forEach(function(t) {
-            var label = t.action === 'create' ? '<span class="status-badge status-success">新增</span>' : '<span class="status-badge status-running">覆盖</span>';
-            html += '<tr><td>' + t.name + '</td><td>' + t.trigger_type + ':' + t.trigger_value + '</td><td>' + label + '</td></tr>';
+            var actionLabel = t.action === 'create' ? '<span class="status-badge status-success">新增</span>' : '<span class="status-badge status-running">覆盖</span>';
+            html += '<div class="diff-card">';
+            html += '<div class="diff-card-header">';
+            html += '<strong>' + t.name + '</strong> ' + actionLabel;
+            html += ' <span class="diff-card-trigger">' + t.trigger_type + ':' + t.trigger_value + '</span>';
+            html += '</div>';
+
+            if (t.action === 'update' && t.diff_fields && t.diff_fields.length > 0) {
+                html += '<div class="diff-fields">';
+                html += '<div class="diff-fields-title">以下字段将被修改：</div>';
+                t.diff_fields.forEach(function(f) {
+                    html += '<div class="diff-field-row">';
+                    html += '<span class="diff-field-name">' + f.field + '</span>';
+                    html += '<span class="diff-field-old">' + escapeHtml(f.old) + '</span>';
+                    html += '<span class="diff-field-arrow">→</span>';
+                    html += '<span class="diff-field-new">' + escapeHtml(f.new) + '</span>';
+                    html += '</div>';
+                });
+                html += '</div>';
+            }
+            html += '</div>';
         });
-        html += '</tbody></table>';
     }
     if (resp.env_vars.length > 0) {
         html += '<h3>环境变量变更</h3><table><thead><tr><th>变量名</th><th>操作</th></tr></thead><tbody>';
@@ -121,13 +142,34 @@ async function showPreview(payload) {
     document.getElementById('preview-panel').style.display = 'block';
 }
 
+function escapeHtml(str) {
+    var div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
 async function executeRestoreFromData() {
     if (!confirm('确定要执行恢复操作吗？这可能会覆盖现有的任务配置。')) return;
     var resp = await apiCall('/api/backup/restore', {
         method: 'POST',
         body: JSON.stringify(pendingRestoreData),
     });
-    alert('恢复成功: 创建 ' + resp.results.tasks_created + ' 个任务, 更新 ' + resp.results.tasks_updated + ' 个任务\n调度器已同步更新。');
+
+    var msg = '恢复成功: 创建 ' + resp.results.tasks_created + ' 个任务, 更新 ' + resp.results.tasks_updated + ' 个任务\n调度器已同步更新。';
+    if (resp.affected_task_ids && resp.affected_task_ids.length > 0) {
+        msg += '\n\n受影响的任务ID: ' + resp.affected_task_ids.join(', ');
+        msg += '\n\n是否跳转到受影响任务？';
+        if (confirm(msg)) {
+            if (resp.affected_task_ids.length === 1) {
+                window.location.href = '/tasks/' + resp.affected_task_ids[0];
+            } else {
+                window.location.href = '/tasks';
+            }
+            return;
+        }
+    } else {
+        alert(msg);
+    }
     pendingRestoreData = null;
     cancelPreview();
     location.reload();
@@ -141,13 +183,6 @@ function cancelPreview() {
     document.getElementById('preview-panel').style.display = 'none';
     document.getElementById('btn-restore-data').style.display = 'none';
     pendingRestoreData = null;
-}
-
-async function restoreFromFile(filename) {
-    if (!confirm('确定要从文件 "' + filename + '" 恢复吗？')) return;
-    var resp = await apiCall('/api/backup/restore?filename=' + encodeURIComponent(filename), { method: 'POST' });
-    alert('恢复成功: 创建 ' + resp.results.tasks_created + ' 个任务, 更新 ' + resp.results.tasks_updated + ' 个任务\n调度器已同步更新。');
-    location.reload();
 }
 </script>
 {% endblock %}

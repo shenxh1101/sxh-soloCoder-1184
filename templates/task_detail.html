@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}{{ task.name }} - 任务详情 - 任务调度看板{% endblock %}
+{% block content %}
+<div class="detail-header">
+    <h1>{{ task.name }}</h1>
+    <div class="detail-header-actions">
+        <a href="{{ url_for('web.edit_task', task_id=task.id) }}" class="btn">编辑</a>
+        <a href="{{ url_for('web.dependency_view', task_id=task.id) }}" class="btn btn-info">依赖视图</a>
+        <a href="{{ url_for('web.execution_history', task_id=task.id) }}" class="btn">执行历史</a>
+        <a href="{{ url_for('web.list_tasks') }}" class="btn">返回列表</a>
+    </div>
+</div>
+
+<div class="detail-grid">
+    <div class="detail-item">
+        <span class="detail-label">任务ID</span>
+        <span class="detail-value">{{ task.id }}</span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">描述</span>
+        <span class="detail-value">{{ task.description or '(无)' }}</span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">触发器</span>
+        <span class="detail-value">{{ task.trigger_type }}: {{ task.trigger_value }}</span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">执行类型</span>
+        <span class="detail-value">{{ task.execute_type }}</span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">并发模式</span>
+        <span class="detail-value">
+            {% if task.concurrency_mode == 'skip' %}
+            <span class="status-badge status-paused">跳过 (skip)</span>
+            {% elif task.concurrency_mode == 'replace' %}
+            <span class="status-badge status-running">替换 (replace)</span>
+            {% else %}
+            <span class="status-badge status-paused">{{ task.concurrency_mode }}</span>
+            {% endif %}
+        </span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">状态</span>
+        <span class="detail-value">
+            {% if task.paused %}<span class="status-badge status-paused">已暂停</span>
+            {% elif not task.enabled %}<span class="status-badge status-failed">已禁用</span>
+            {% else %}<span class="status-badge status-success">运行中</span>{% endif %}
+        </span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">重试策略</span>
+        <span class="detail-value">最多 {{ task.retry_count }} 次，间隔 {{ task.retry_delay_seconds }}s</span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">通知邮箱</span>
+        <span class="detail-value">{{ task.notify_email or '(未设置)' }}</span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">依赖任务</span>
+        <span class="detail-value">
+            {% if upstream_tasks %}
+            {% for ut in upstream_tasks %}
+            <a href="{{ url_for('web.task_detail', task_id=ut.id) }}" class="dep-link">{{ ut.name }}</a>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+            {% else %}(无){% endif %}
+        </span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">下游任务</span>
+        <span class="detail-value">
+            {% if downstream_tasks %}
+            {% for dt in downstream_tasks %}
+            <a href="{{ url_for('web.task_detail', task_id=dt.id) }}" class="dep-link">{{ dt.name }}</a>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+            {% else %}(无){% endif %}
+        </span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">创建时间</span>
+        <span class="detail-value">{{ task.created_at.strftime('%Y-%m-%d %H:%M:%S') if task.created_at else '-' }}</span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">更新时间</span>
+        <span class="detail-value">{{ task.updated_at.strftime('%Y-%m-%d %H:%M:%S') if task.updated_at else '-' }}</span>
+    </div>
+</div>
+
+<h2>运行统计</h2>
+<div class="stats-grid">
+    <div class="stat-card {% if stats.success_rate is not none and stats.success_rate >= 90 %}stat-green{% elif stats.success_rate is not none and stats.success_rate < 50 %}stat-red{% else %}stat-yellow{% endif %}">
+        <div class="stat-value">{{ stats.success_rate if stats.success_rate is not none else '-' }}{% if stats.success_rate is not none %}%{% endif %}</div>
+        <div class="stat-label">最近成功率</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.avg_duration_s if stats.avg_duration_s is not none else '-' }}{% if stats.avg_duration_s is not none %}s{% endif %}</div>
+        <div class="stat-label">平均耗时</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.total_executions }}</div>
+        <div class="stat-label">总执行次数</div>
+    </div>
+    <div class="stat-card {% if stats.consecutive_failures > 0 %}stat-red{% else %}stat-green{% endif %}">
+        <div class="stat-value">{{ stats.consecutive_failures }}</div>
+        <div class="stat-label">连续失败次数</div>
+    </div>
+</div>
+
+{% if stats.last_failure_reason %}
+<div class="last-failure-box">
+    <strong>最近一次失败原因：</strong>
+    <pre class="failure-reason">{{ stats.last_failure_reason }}</pre>
+</div>
+{% endif %}
+
+<h2>最近执行记录</h2>
+{% if recent_executions %}
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>开始时间</th>
+            <th>结束时间</th>
+            <th>耗时</th>
+            <th>状态</th>
+            <th>触发方式</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for exec in recent_executions %}
+        <tr>
+            <td>{{ exec.id }}</td>
+            <td>{{ exec.start_time.strftime('%Y-%m-%d %H:%M:%S') if exec.start_time else '-' }}</td>
+            <td>{{ exec.end_time.strftime('%Y-%m-%d %H:%M:%S') if exec.end_time else '-' }}</td>
+            <td>
+                {% if exec.start_time and exec.end_time %}
+                {{ (exec.end_time - exec.start_time).total_seconds() | round(2) }}s
+                {% else %}-{% endif %}
+            </td>
+            <td>
+                {% if exec.status == 'skipped' %}
+                <span class="status-badge status-paused" title="{{ exec.skip_reason }}">跳过</span>
+                {% elif exec.status == 'cancelled' %}
+                <span class="status-badge status-failed">已取消</span>
+                {% else %}
+                <span class="status-badge status-{{ exec.status }}">{{ exec.status }}</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if exec.trigger_type == 'dependency' %}
+                <span class="trigger-label trigger-dep">依赖触发</span>
+                {% elif exec.trigger_type == 'manual' %}
+                <span class="trigger-label trigger-manual">手动</span>
+                {% elif exec.trigger_type == 'retry' %}
+                <span class="trigger-label trigger-retry">重试</span>
+                {% else %}
+                <span class="trigger-label trigger-sched">定时</span>
+                {% endif %}
+            </td>
+            <td class="action-cell">
+                <a href="{{ url_for('web.execution_detail', execution_id=exec.id) }}" class="btn btn-sm">详情</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-hint">暂无执行记录</p>
+{% endif %}
+{% endblock %}

@@ -25,7 +25,9 @@
         {% for task in tasks %}
         <tr>
             <td>{{ task.id }}</td>
-            <td>{{ task.name }}</td>
+            <td>
+            <a href="{{ url_for('web.task_detail', task_id=task.id) }}">{{ task.name }}</a>
+            </td>
             <td>{{ task.description[:50] if task.description else '-' }}</td>
             <td>{{ task.trigger_type }}: {{ task.trigger_value }}</td>
             <td>{{ task.execute_type }}</td>
@@ -62,6 +64,7 @@
                 <button class="btn btn-sm btn-warning" onclick="pauseTask({{ task.id }})">暂停</button>
                 {% endif %}
                 <a href="{{ url_for('web.edit_task', task_id=task.id) }}" class="btn btn-sm">编辑</a>
+                <a href="{{ url_for('web.dependency_view', task_id=task.id) }}" class="btn btn-sm btn-info">依赖</a>
                 <button class="btn btn-sm btn-danger" onclick="deleteTask({{ task.id }})">删除</button>
             </td>
         </tr>

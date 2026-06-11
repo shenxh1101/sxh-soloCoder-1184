@@ -5,8 +5,7 @@ import subprocess
 import datetime
 import traceback
 import smtplib
-import json
-import shutil
+import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -17,6 +16,9 @@ from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 from croniter import croniter
 
 from config import Config
+
+_running_tasks = set()
+_running_lock = threading.Lock()
 
 
 def validate_trigger(trigger_type, trigger_value, timezone=None):
@@ -80,8 +82,8 @@ class SchedulerManager:
         self.scheduler = BackgroundScheduler(
             timezone=app.config.get('SCHEDULER_TIMEZONE', 'Asia/Shanghai'),
             job_defaults={
-                'coalesce': True,
-                'max_instances': 1,
+                'coalesce': False,
+                'max_instances': 3,
             }
         )
         self.scheduler.add_listener(self._job_event_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
@@ -92,7 +94,6 @@ class SchedulerManager:
             return
         with self.app.app_context():
             from models import db, Execution, Task
-            job_id = event.job_id
             execution = Execution.query.filter_by(
                 id=getattr(event, 'execution_db_id', None)
             ).first()
@@ -111,10 +112,14 @@ class SchedulerManager:
             execution.end_time = datetime.datetime.now(datetime.UTC)
             db.session.commit()
 
+            with _running_lock:
+                _running_tasks.discard(execution.task_id)
+
             task = Task.query.get(execution.task_id)
-            if task:
+            if task and execution.status in ('success', 'failed'):
                 self._send_notification(task, execution)
-                self._trigger_dependent_tasks(task, execution)
+                if execution.status == 'success':
+                    self._trigger_dependent_tasks(task, execution)
 
     def _build_trigger(self, task):
         validate_trigger(task.trigger_type, task.trigger_value,
@@ -173,12 +178,12 @@ class SchedulerManager:
             task = db.session.get(Task, task_id)
             if not task:
                 raise ValueError(f'Task {task_id} not found')
-            trigger_type = 'dependency' if trigger_source_execution_id else 'manual'
+            trigger_type_label = 'dependency' if trigger_source_execution_id else 'manual'
             self.scheduler.add_job(
                 func=self._execute_task,
                 args=[task.id],
                 kwargs={
-                    '_trigger_type': trigger_type,
+                    '_trigger_type': trigger_type_label,
                     'trigger_source_execution_id': trigger_source_execution_id,
                 },
                 id=f'manual_{task.id}_{datetime.datetime.now(datetime.UTC).timestamp()}',
@@ -205,6 +210,36 @@ class SchedulerManager:
                 trigger_type = 'retry'
             else:
                 trigger_type = 'scheduled'
+
+            mode = task.concurrency_mode or 'skip'
+
+            with _running_lock:
+                if task_id in _running_tasks:
+                    if mode == 'skip':
+                        skip_execution = Execution(
+                            task_id=task.id,
+                            start_time=datetime.datetime.now(datetime.UTC),
+                            end_time=datetime.datetime.now(datetime.UTC),
+                            status='skipped',
+                            trigger_type=trigger_type,
+                            trigger_source_execution_id=trigger_source_execution_id,
+                            retry_attempt=retry_attempt,
+                            skip_reason='任务正在运行中，并发模式为跳过',
+                        )
+                        db.session.add(skip_execution)
+                        db.session.commit()
+                        return
+                    elif mode == 'replace':
+                        from models import Execution
+                        running = Execution.query.filter_by(task_id=task_id, status='running').all()
+                        for rex in running:
+                            rex.status = 'cancelled'
+                            rex.end_time = datetime.datetime.now(datetime.UTC)
+                            rex.output_log = (rex.output_log or '') + '\n[已取消：被新触发替换]'
+                        db.session.commit()
+                        with _running_lock:
+                            _running_tasks.discard(task_id)
+                _running_tasks.add(task_id)
 
             execution = Execution(
                 task_id=task.id,
@@ -233,12 +268,15 @@ class SchedulerManager:
             try:
                 if task.execute_type == 'python':
                     old_stdout = sys.stdout
+                    old_stderr = sys.stderr
                     sys.stdout = output_buffer
+                    sys.stderr = output_buffer
                     try:
                         exec_globals = {'__builtins__': __builtins__}
                         exec(task.execute_content, exec_globals)
                     finally:
                         sys.stdout = old_stdout
+                        sys.stderr = old_stderr
                 elif task.execute_type == 'command':
                     result = subprocess.run(
                         task.execute_content,
@@ -273,6 +311,8 @@ class SchedulerManager:
                     execution.status = 'retrying'
                     execution.end_time = datetime.datetime.now(datetime.UTC)
                     db.session.commit()
+                    with _running_lock:
+                        _running_tasks.discard(task_id)
                     import time
                     time.sleep(task.retry_delay_seconds)
                     self._execute_task(task_id, retry_attempt + 1, trigger_source_execution_id, _trigger_type='retry')
@@ -283,9 +323,13 @@ class SchedulerManager:
 
             finally:
                 output_buffer.close()
+                with _running_lock:
+                    _running_tasks.discard(task_id)
 
-            self._send_notification(task, execution)
-            self._trigger_dependent_tasks(task, execution)
+            if execution.status in ('success', 'failed'):
+                self._send_notification(task, execution)
+                if execution.status == 'success':
+                    self._trigger_dependent_tasks(task, execution)
 
     def _send_notification(self, task, execution):
         if not task.notify_email:

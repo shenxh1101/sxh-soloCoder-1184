@@ -55,6 +55,18 @@
     </div>
 
     <fieldset class="form-fieldset">
+        <legend>并发控制</legend>
+        <div class="form-group">
+            <label for="concurrency_mode">并发模式</label>
+            <select id="concurrency_mode" name="concurrency_mode">
+                <option value="skip" {% if task and task.concurrency_mode == 'skip' %}selected{% endif %}>跳过 — 任务运行中时新触发直接跳过</option>
+                <option value="replace" {% if task and task.concurrency_mode == 'replace' %}selected{% endif %}>替换 — 任务运行中时取消旧任务，执行新触发</option>
+            </select>
+            <small class="form-hint">控制当任务还在执行时，新的触发如何处理。选择"跳过"会记录一条跳过记录；选择"替换"会取消正在运行的任务并开始新的执行。</small>
+        </div>
+    </fieldset>
+
+    <fieldset class="form-fieldset">
         <legend>重试策略</legend>
         <div class="form-row">
             <div class="form-group">

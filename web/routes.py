@@ -118,6 +118,7 @@ def handle_task_form(form, task=None):
             execute_content=form.get('execute_content', ''),
             enabled=True,
             paused=False,
+            concurrency_mode=form.get('concurrency_mode', 'skip'),
             retry_count=int(form.get('retry_count', 0)),
             retry_delay_seconds=int(form.get('retry_delay_seconds', 60)),
             notify_email=form.get('notify_email', ''),
@@ -144,6 +145,7 @@ def handle_task_form(form, task=None):
         task.trigger_value = trigger_value
         task.execute_type = form.get('execute_type', 'python')
         task.execute_content = form.get('execute_content', '')
+        task.concurrency_mode = form.get('concurrency_mode', 'skip')
         task.retry_count = int(form.get('retry_count', 0))
         task.retry_delay_seconds = int(form.get('retry_delay_seconds', 60))
         task.notify_email = form.get('notify_email', '')
@@ -226,6 +228,86 @@ def scheduler_status():
 def env_vars():
     env_vars = EnvVar.query.order_by(EnvVar.key).all()
     return render_template('env_vars.html', env_vars=env_vars)
+
+
+@web_bp.route('/tasks/<int:task_id>')
+def task_detail(task_id):
+    task = db.session.get(Task, task_id)
+    if not task:
+        flash('任务不存在', 'error')
+        return redirect(url_for('web.list_tasks'))
+
+    stats = task.get_stats()
+    dependency_tree = task.get_full_dependency_tree()
+    recent_executions = Execution.query.filter_by(task_id=task.id) \
+        .order_by(Execution.start_time.desc()).limit(20).all()
+
+    upstream_tasks = []
+    for node in dependency_tree['upstream']:
+        t = db.session.get(Task, node['id'])
+        if t:
+            upstream_tasks.append(t)
+    downstream_tasks = []
+    for node in dependency_tree['downstream']:
+        t = db.session.get(Task, node['id'])
+        if t:
+            downstream_tasks.append(t)
+
+    return render_template(
+        'task_detail.html',
+        task=task,
+        stats=stats,
+        upstream_tasks=upstream_tasks,
+        downstream_tasks=downstream_tasks,
+        recent_executions=recent_executions,
+    )
+
+
+@web_bp.route('/tasks/<int:task_id>/dependencies')
+def dependency_view(task_id):
+    task = db.session.get(Task, task_id)
+    if not task:
+        flash('任务不存在', 'error')
+        return redirect(url_for('web.list_tasks'))
+
+    dependency_tree = task.get_full_dependency_tree()
+
+    upstream_nodes = []
+    for node in dependency_tree['upstream']:
+        t = db.session.get(Task, node['id'])
+        if t:
+            ts = t.get_stats()
+            last = Execution.query.filter_by(task_id=node['id']).order_by(
+                Execution.start_time.desc()).first()
+            upstream_nodes.append({
+                'task': t, 'stats': ts,
+                'last_execution': last,
+            })
+
+    downstream_nodes = []
+    for node in dependency_tree['downstream']:
+        t = db.session.get(Task, node['id'])
+        if t:
+            ts = t.get_stats()
+            last = Execution.query.filter_by(task_id=node['id']).order_by(
+                Execution.start_time.desc()).first()
+            downstream_nodes.append({
+                'task': t, 'stats': ts,
+                'last_execution': last,
+            })
+
+    task_stats = task.get_stats()
+    last_execution = Execution.query.filter_by(task_id=task.id).order_by(
+        Execution.start_time.desc()).first()
+
+    return render_template(
+        'dependency_view.html',
+        task=task,
+        task_stats=task_stats,
+        last_execution=last_execution,
+        upstream_nodes=upstream_nodes,
+        downstream_nodes=downstream_nodes,
+    )
 
 
 @web_bp.route('/backup')
