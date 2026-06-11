@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}环境变量 - 任务调度看板{% endblock %}
+{% block content %}
+<h1>环境变量管理</h1>
+<p class="hint">全局环境变量会被注入到所有命令行任务的执行环境中。</p>
+
+<div class="toolbar">
+    <button class="btn btn-primary" onclick="showCreateForm()">+ 添加环境变量</button>
+</div>
+
+<div id="create-form" class="env-form" style="display:none;">
+    <h3>添加环境变量</h3>
+    <div class="form-group">
+        <label for="ev_key">变量名</label>
+        <input type="text" id="ev_key" placeholder="MY_VAR">
+    </div>
+    <div class="form-group">
+        <label for="ev_value">变量值</label>
+        <input type="text" id="ev_value" placeholder="value">
+    </div>
+    <div class="form-group">
+        <label for="ev_desc">描述</label>
+        <input type="text" id="ev_desc" placeholder="可选描述">
+    </div>
+    <button class="btn btn-primary" onclick="createEnvVar()">保存</button>
+    <button class="btn" onclick="hideCreateForm()">取消</button>
+</div>
+
+{% if env_vars %}
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>变量名</th>
+            <th>变量值</th>
+            <th>描述</th>
+            <th>创建时间</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for ev in env_vars %}
+        <tr>
+            <td>{{ ev.id }}</td>
+            <td><code>{{ ev.key }}</code></td>
+            <td><code>{{ ev.value[:50] }}{% if ev.value|length > 50 %}...{% endif %}</code></td>
+            <td>{{ ev.description[:50] if ev.description else '-' }}</td>
+            <td>{{ ev.created_at.strftime('%Y-%m-%d %H:%M') if ev.created_at else '-' }}</td>
+            <td>
+                <button class="btn btn-sm btn-danger" onclick="deleteEnvVar({{ ev.id }})">删除</button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-hint">暂无全局环境变量</p>
+{% endif %}
+{% endblock %}
+
+<script>
+function showCreateForm() {
+    document.getElementById('create-form').style.display = 'block';
+}
+function hideCreateForm() {
+    document.getElementById('create-form').style.display = 'none';
+}
+async function createEnvVar() {
+    var key = document.getElementById('ev_key').value.trim();
+    var value = document.getElementById('ev_value').value;
+    var desc = document.getElementById('ev_desc').value;
+    if (!key) { alert('变量名不能为空'); return; }
+    await apiCall('/api/env-vars', {
+        method: 'POST',
+        body: JSON.stringify({ key: key, value: value, description: desc }),
+    });
+    location.reload();
+}
+async function deleteEnvVar(id) {
+    if (!confirmDelete('确定要删除这个环境变量吗？')) return;
+    await apiCall('/api/env-vars/' + id, { method: 'DELETE' });
+    location.reload();
+}
+</script>

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}任务调度看板{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">⏱ 任务调度看板</div>
+        <ul class="nav-links">
+            <li><a href="{{ url_for('web.index') }}" class="{% if request.endpoint == 'web.index' %}active{% endif %}">仪表盘</a></li>
+            <li><a href="{{ url_for('web.list_tasks') }}" class="{% if request.endpoint == 'web.list_tasks' or request.endpoint == 'web.create_task' or request.endpoint == 'web.edit_task' %}active{% endif %}">任务管理</a></li>
+            <li><a href="{{ url_for('web.execution_history') }}" class="{% if request.endpoint == 'web.execution_history' %}active{% endif %}">执行历史</a></li>
+            <li><a href="{{ url_for('web.scheduler_status') }}" class="{% if request.endpoint == 'web.scheduler_status' %}active{% endif %}">调度器状态</a></li>
+            <li><a href="{{ url_for('web.env_vars') }}" class="{% if request.endpoint == 'web.env_vars' %}active{% endif %}">环境变量</a></li>
+            <li><a href="{{ url_for('web.backup') }}" class="{% if request.endpoint == 'web.backup' %}active{% endif %}">备份恢复</a></li>
+        </ul>
+    </nav>
+
+    <main class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <script>
+    function confirmDelete(message) {
+        return confirm(message || '确定要删除吗？');
+    }
+
+    async function apiCall(url, options = {}) {
+        try {
+            const resp = await fetch(url, {
+                headers: { 'Content-Type': 'application/json', ...options.headers },
+                ...options,
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                throw new Error(data.error || 'Request failed');
+            }
+            return data;
+        } catch (err) {
+            alert('操作失败: ' + err.message);
+            throw err;
+        }
+    }
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

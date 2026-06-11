@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}调度器状态 - 任务调度看板{% endblock %}
+{% block content %}
+<h1>调度器状态</h1>
+
+<div class="stats-grid">
+    <div class="stat-card {% if status.running %}stat-green{% else %}stat-red{% endif %}">
+        <div class="stat-value">{{ '运行中' if status.running else '已停止' }}</div>
+        <div class="stat-label">调度器状态</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ status.active_jobs }}</div>
+        <div class="stat-label">活跃 Job 数</div>
+    </div>
+</div>
+
+<div class="toolbar">
+    <button class="btn btn-primary" onclick="reloadScheduler()">重新加载所有任务</button>
+</div>
+
+<h2>调度中的 Job 列表</h2>
+{% if status.jobs %}
+<table>
+    <thead>
+        <tr>
+            <th>Job ID</th>
+            <th>名称</th>
+            <th>触发器</th>
+            <th>下次运行时间</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for job in status.jobs %}
+        <tr>
+            <td>{{ job.id }}</td>
+            <td>{{ job.name }}</td>
+            <td>{{ job.trigger }}</td>
+            <td>{{ job.next_run_time }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-hint">无活跃 Job</p>
+{% endif %}
+
+<script>
+async function reloadScheduler() {
+    await apiCall('/api/scheduler/reload', { method: 'POST' });
+    location.reload();
+}
+</script>
+{% endblock %}

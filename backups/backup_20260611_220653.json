@@ -1,0 +1,30 @@
+{
+  "version": "1.0",
+  "exported_at": "2026-06-11T14:06:53.060250+00:00",
+  "tasks": [
+    {
+      "name": "test_hello",
+      "description": "A test task",
+      "trigger_type": "interval",
+      "trigger_value": "3600",
+      "execute_type": "python",
+      "execute_content": "print(\"Hello from scheduler!\")",
+      "enabled": true,
+      "paused": false,
+      "retry_count": 0,
+      "retry_delay_seconds": 60,
+      "notify_email": "",
+      "notify_on_success": false,
+      "notify_on_failure": true,
+      "depends_on_name": null,
+      "env_vars": {}
+    }
+  ],
+  "env_vars": [
+    {
+      "key": "MY_TEST_VAR",
+      "value": "hello_world",
+      "description": "Test variable"
+    }
+  ]
+}

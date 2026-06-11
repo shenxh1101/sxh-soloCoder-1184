@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}执行详情 - 任务调度看板{% endblock %}
+{% block content %}
+<h1>执行详情 #{{ execution.id }}</h1>
+
+<div class="detail-grid">
+    <div class="detail-item">
+        <span class="detail-label">任务名称</span>
+        <span class="detail-value">{{ execution.task.name if execution.task else '已删除' }}</span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">状态</span>
+        <span class="detail-value"><span class="status-badge status-{{ execution.status }}">{{ execution.status }}</span></span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">触发方式</span>
+        <span class="detail-value">{{ execution.trigger_type }}</span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">重试次数</span>
+        <span class="detail-value">{{ execution.retry_attempt }}</span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">开始时间</span>
+        <span class="detail-value">{{ execution.start_time.strftime('%Y-%m-%d %H:%M:%S') if execution.start_time else '-' }}</span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">结束时间</span>
+        <span class="detail-value">{{ execution.end_time.strftime('%Y-%m-%d %H:%M:%S') if execution.end_time else '-' }}</span>
+    </div>
+    <div class="detail-item">
+        <span class="detail-label">耗时</span>
+        <span class="detail-value">
+            {% if execution.start_time and execution.end_time %}
+            {{ (execution.end_time - execution.start_time).total_seconds() | round(2) }}s
+            {% else %}-{% endif %}
+        </span>
+    </div>
+</div>
+
+<h2>输出日志</h2>
+<pre class="log-viewer">{{ execution.output_log or '(无输出)' }}</pre>
+
+<div class="form-actions">
+    <a href="{{ url_for('web.execution_history') }}" class="btn">返回历史记录</a>
+</div>
+{% endblock %}

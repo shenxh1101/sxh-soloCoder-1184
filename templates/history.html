@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}执行历史 - 任务调度看板{% endblock %}
+{% block content %}
+<h1>执行历史</h1>
+
+<form class="filter-bar" method="GET">
+    <select name="task_id">
+        <option value="">全部任务</option>
+        {% for t in all_tasks %}
+        <option value="{{ t.id }}" {% if selected_task_id == t.id %}selected{% endif %}>{{ t.name }}</option>
+        {% endfor %}
+    </select>
+    <select name="status">
+        <option value="">全部状态</option>
+        <option value="success" {% if selected_status == 'success' %}selected{% endif %}>成功</option>
+        <option value="failed" {% if selected_status == 'failed' %}selected{% endif %}>失败</option>
+        <option value="running" {% if selected_status == 'running' %}selected{% endif %}>运行中</option>
+        <option value="retrying" {% if selected_status == 'retrying' %}selected{% endif %}>重试中</option>
+    </select>
+    <button type="submit" class="btn btn-sm">筛选</button>
+</form>
+
+{% if executions %}
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>任务名称</th>
+            <th>开始时间</th>
+            <th>结束时间</th>
+            <th>耗时</th>
+            <th>状态</th>
+            <th>触发方式</th>
+            <th>重试</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for exec in executions %}
+        <tr>
+            <td>{{ exec.id }}</td>
+            <td>{{ exec.task.name if exec.task else '已删除' }}</td>
+            <td>{{ exec.start_time.strftime('%Y-%m-%d %H:%M:%S') if exec.start_time else '-' }}</td>
+            <td>{{ exec.end_time.strftime('%Y-%m-%d %H:%M:%S') if exec.end_time else '-' }}</td>
+            <td>
+                {% if exec.start_time and exec.end_time %}
+                {{ (exec.end_time - exec.start_time).total_seconds() | round(2) }}s
+                {% else %}-{% endif %}
+            </td>
+            <td><span class="status-badge status-{{ exec.status }}">{{ exec.status }}</span></td>
+            <td>{{ exec.trigger_type }}</td>
+            <td>{{ exec.retry_attempt }}</td>
+            <td>
+                <a href="{{ url_for('web.execution_detail', execution_id=exec.id) }}" class="btn btn-sm">详情</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-hint">暂无执行记录</p>
+{% endif %}
+{% endblock %}

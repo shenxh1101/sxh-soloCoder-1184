@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}{{ '编辑任务' if task else '创建任务' }} - 任务调度看板{% endblock %}
+{% block content %}
+<h1>{{ '编辑任务' if task else '创建任务' }}</h1>
+
+<form method="POST" class="task-form">
+    <div class="form-group">
+        <label for="name">任务名称 <span class="required">*</span></label>
+        <input type="text" id="name" name="name" value="{{ task.name if task else '' }}" required placeholder="唯一的任务标识名称">
+    </div>
+
+    <div class="form-group">
+        <label for="description">描述</label>
+        <textarea id="description" name="description" rows="2" placeholder="任务描述（可选）">{{ task.description if task else '' }}</textarea>
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label for="trigger_type">触发类型 <span class="required">*</span></label>
+            <select id="trigger_type" name="trigger_type" onchange="toggleTriggerInput()">
+                <option value="cron" {% if task and task.trigger_type == 'cron' %}selected{% endif %}>Cron 表达式</option>
+                <option value="interval" {% if task and task.trigger_type == 'interval' %}selected{% endif %}>间隔时间（秒）</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="trigger_value">触发值 <span class="required">*</span></label>
+            <input type="text" id="trigger_value" name="trigger_value" value="{{ task.trigger_value if task else '' }}" required>
+            <small id="trigger_hint" class="form-hint">Cron: 分 时 日 月 周 (e.g. */5 * * * *) | 间隔: 秒数 (e.g. 3600)</small>
+        </div>
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label for="execute_type">执行类型 <span class="required">*</span></label>
+            <select id="execute_type" name="execute_type" onchange="toggleExecuteHint()">
+                <option value="python" {% if task and task.execute_type == 'python' %}selected{% endif %}>Python 表达式</option>
+                <option value="command" {% if task and task.execute_type == 'command' %}selected{% endif %}>命令行</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label for="execute_content">执行内容 <span class="required">*</span></label>
+        <textarea id="execute_content" name="execute_content" rows="6" required placeholder="{{ 'Python 代码...' if not task or task.execute_type == 'python' else 'shell 命令...' }}">{{ task.execute_content if task else '' }}</textarea>
+        <small id="execute_hint" class="form-hint">{{ '输入要执行的 Python 代码' if not task or task.execute_type == 'python' else '输入要执行的 Shell 命令' }}</small>
+    </div>
+
+    <fieldset class="form-fieldset">
+        <legend>重试策略</legend>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="retry_count">重试次数</label>
+                <input type="number" id="retry_count" name="retry_count" value="{{ task.retry_count if task else 0 }}" min="0">
+            </div>
+            <div class="form-group">
+                <label for="retry_delay_seconds">重试延迟（秒）</label>
+                <input type="number" id="retry_delay_seconds" name="retry_delay_seconds" value="{{ task.retry_delay_seconds if task else 60 }}" min="0">
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset class="form-fieldset">
+        <legend>邮件通知</legend>
+        <div class="form-group">
+            <label for="notify_email">通知邮箱</label>
+            <input type="text" id="notify_email" name="notify_email" value="{{ task.notify_email if task else '' }}" placeholder="多个邮箱用逗号分隔">
+        </div>
+        <div class="form-row">
+            <div class="form-group form-check">
+                <input type="checkbox" id="notify_on_success" name="notify_on_success" {% if task and task.notify_on_success %}checked{% endif %}>
+                <label for="notify_on_success">成功时通知</label>
+            </div>
+            <div class="form-group form-check">
+                <input type="checkbox" id="notify_on_failure" name="notify_on_failure" {% if task and task.notify_on_failure %}checked{% endif %}>
+                <label for="notify_on_failure">失败时通知</label>
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset class="form-fieldset">
+        <legend>任务依赖</legend>
+        <div class="form-group">
+            <label for="depends_on">依赖任务</label>
+            <select id="depends_on" name="depends_on">
+                <option value="">-- 无依赖 --</option>
+                {% for t in all_tasks %}
+                {% if not task or t.id != task.id %}
+                <option value="{{ t.id }}" {% if task and task.depends_on == t.id %}selected{% endif %}>{{ t.name }}</option>
+                {% endif %}
+                {% endfor %}
+            </select>
+            <small class="form-hint">当前任务将在依赖任务成功完成后自动触发</small>
+        </div>
+    </fieldset>
+
+    <fieldset class="form-fieldset">
+        <legend>任务环境变量</legend>
+        <div id="env-vars-container">
+            {% set env_vars = task.get_env_vars() if task else {} %}
+            {% if env_vars %}
+            {% for key, value in env_vars.items() %}
+            <div class="form-row env-var-row">
+                <input type="text" name="env_key" value="{{ key }}" placeholder="变量名" class="env-key">
+                <input type="text" name="env_value" value="{{ value }}" placeholder="变量值" class="env-value">
+                <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">删除</button>
+            </div>
+            {% endfor %}
+            {% else %}
+            <div class="form-row env-var-row">
+                <input type="text" name="env_key" value="" placeholder="变量名" class="env-key">
+                <input type="text" name="env_value" value="" placeholder="变量值" class="env-value">
+                <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">删除</button>
+            </div>
+            {% endif %}
+        </div>
+        <button type="button" class="btn btn-sm" onclick="addEnvVarRow()">+ 添加环境变量</button>
+    </fieldset>
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">保存</button>
+        <a href="{{ url_for('web.list_tasks') }}" class="btn">取消</a>
+    </div>
+</form>
+
+<script>
+function toggleTriggerInput() {
+    var type = document.getElementById('trigger_type').value;
+    var hint = document.getElementById('trigger_hint');
+    if (type === 'cron') {
+        hint.textContent = 'Cron: 分 时 日 月 周 (e.g. */5 * * * *)';
+    } else {
+        hint.textContent = '间隔: 秒数 (e.g. 3600)';
+    }
+}
+
+function toggleExecuteHint() {
+    var type = document.getElementById('execute_type').value;
+    var hint = document.getElementById('execute_hint');
+    var textarea = document.getElementById('execute_content');
+    if (type === 'python') {
+        hint.textContent = '输入要执行的 Python 代码';
+        textarea.placeholder = 'Python 代码...';
+    } else {
+        hint.textContent = '输入要执行的 Shell 命令';
+        textarea.placeholder = 'shell 命令...';
+    }
+}
+
+function addEnvVarRow() {
+    var container = document.getElementById('env-vars-container');
+    var row = document.createElement('div');
+    row.className = 'form-row env-var-row';
+    row.innerHTML = '<input type="text" name="env_key" value="" placeholder="变量名" class="env-key"><input type="text" name="env_value" value="" placeholder="变量值" class="env-value"><button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">删除</button>';
+    container.appendChild(row);
+}
+</script>
+{% endblock %}

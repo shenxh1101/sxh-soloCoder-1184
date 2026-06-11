@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}仪表盘 - 任务调度看板{% endblock %}
+{% block content %}
+<h1>仪表盘</h1>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value">{{ total_tasks }}</div>
+        <div class="stat-label">总任务数</div>
+    </div>
+    <div class="stat-card stat-green">
+        <div class="stat-value">{{ active_tasks }}</div>
+        <div class="stat-label">活跃任务</div>
+    </div>
+    <div class="stat-card stat-yellow">
+        <div class="stat-value">{{ paused_tasks }}</div>
+        <div class="stat-label">已暂停</div>
+    </div>
+    <div class="stat-card stat-red">
+        <div class="stat-value">{{ failed_today }}</div>
+        <div class="stat-label">今日失败</div>
+    </div>
+</div>
+
+<h2>最近执行记录</h2>
+{% if recent_executions %}
+<table>
+    <thead>
+        <tr>
+            <th>任务名称</th>
+            <th>开始时间</th>
+            <th>结束时间</th>
+            <th>状态</th>
+            <th>触发方式</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for exec in recent_executions %}
+        <tr>
+            <td>{{ exec.task.name if exec.task else '已删除' }}</td>
+            <td>{{ exec.start_time.strftime('%Y-%m-%d %H:%M:%S') if exec.start_time else '-' }}</td>
+            <td>{{ exec.end_time.strftime('%Y-%m-%d %H:%M:%S') if exec.end_time else '-' }}</td>
+            <td><span class="status-badge status-{{ exec.status }}">{{ exec.status }}</span></td>
+            <td>{{ exec.trigger_type }}</td>
+            <td>
+                <a href="{{ url_for('web.execution_detail', execution_id=exec.id) }}" class="btn btn-sm">详情</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-hint">暂无执行记录</p>
+{% endif %}
+
+<h2>活跃任务</h2>
+{% if tasks %}
+<table>
+    <thead>
+        <tr>
+            <th>名称</th>
+            <th>触发器</th>
+            <th>状态</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for task in tasks %}
+        <tr>
+            <td>{{ task.name }}</td>
+            <td>{{ task.trigger_type }}: {{ task.trigger_value }}</td>
+            <td>
+                {% if task.paused %}
+                <span class="status-badge status-paused">已暂停</span>
+                {% elif task.enabled %}
+                <span class="status-badge status-success">运行中</span>
+                {% else %}
+                <span class="status-badge status-failed">已禁用</span>
+                {% endif %}
+            </td>
+            <td class="action-cell">
+                <button class="btn btn-sm btn-success" onclick="executeTask({{ task.id }})">立即执行</button>
+                {% if task.paused %}
+                <button class="btn btn-sm btn-info" onclick="resumeTask({{ task.id }})">恢复</button>
+                {% else %}
+                <button class="btn btn-sm btn-warning" onclick="pauseTask({{ task.id }})">暂停</button>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-hint">暂无任务，<a href="{{ url_for('web.create_task') }}">创建第一个任务</a></p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function executeTask(id) {
+    await apiCall('/api/tasks/' + id + '/execute', { method: 'POST' });
+    location.reload();
+}
+async function pauseTask(id) {
+    await apiCall('/api/tasks/' + id + '/pause', { method: 'POST' });
+    location.reload();
+}
+async function resumeTask(id) {
+    await apiCall('/api/tasks/' + id + '/resume', { method: 'POST' });
+    location.reload();
+}
+</script>
+{% endblock %}
